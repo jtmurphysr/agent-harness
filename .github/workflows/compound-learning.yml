@@ -1,0 +1,173 @@
+name: Compound Learning
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  compound:
+    name: Extract Learnings from Merge
+    if: |
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'agent-task')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Extract learnings
+        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GH_PAT }}
+          mode: agent
+          allowed_tools: "Bash(gh:*),Bash(git:*),Bash(mkdir:*),Read,Write,Edit,LS,Glob,Grep,TodoWrite"
+          direct_prompt: |
+            You are the Compound Learning Agent for this repository's autonomous development harness.
+
+            Your job is to analyze a just-merged pull request and extract structured learnings
+            that will make future agent work better. Each merge is a learning opportunity.
+
+            ## Context
+
+            Pull request: #${{ github.event.pull_request.number }}
+            Title: ${{ github.event.pull_request.title }}
+            Branch: ${{ github.event.pull_request.head.ref }}
+
+            ## Step 1: Gather inputs
+
+            Read these before doing anything else:
+            - The PR diff: run `gh pr diff ${{ github.event.pull_request.number }}`
+            - The PR body and comments: run `gh pr view ${{ github.event.pull_request.number }} --comments`
+            - The linked issue (if any): extract the issue number from the PR body or branch name, then run `gh issue view <number>`
+            - AGENTS.md — current harness constitution
+            - docs/learnings/ — existing learnings for pattern reference
+
+            ## Step 2: Analyze the cycle
+
+            Compare what the issue spec asked for against what the PR actually delivered.
+            Evaluate across these dimensions:
+
+            ### Specification Quality
+            - Was the interface contract honored exactly, or did the agent deviate?
+            - Were the FILES TO CREATE/MODIFY lists accurate, or did the agent touch unexpected files?
+            - Were domain warnings addressed in the implementation, or silently ignored?
+            - Were test names from the issue implemented as specified?
+
+            ### Agent Behavior
+            - Did the agent stay in scope, or did it creep into adjacent modules?
+            - Did CI pass on the first push, or were there iterations?
+            - Were there any error patterns worth preventing in future issues?
+
+            ### Missing Context
+            - What information would have helped the agent get it right on the first attempt?
+            - Were there implicit assumptions that should have been explicit in the issue?
+            - Were there domain-specific gotchas that should become standard warnings?
+
+            ### Reusable Patterns
+            - Did the agent discover a good pattern worth codifying?
+            - Were there architectural decisions that should inform future module design?
+            - Did the testing approach reveal useful strategies?
+
+            ## Step 3: Write the learning
+
+            Create a file at docs/learnings/pr-${{ github.event.pull_request.number }}.md
+            using this exact structure:
+
+            ```markdown
+            ---
+            pr: ${{ github.event.pull_request.number }}
+            issue: <linked issue number or "none">
+            module: <primary module name>
+            date: <today's date YYYY-MM-DD>
+            tags: [<relevant tags: scope-creep, interface-mismatch, missing-warning, clean-pass, etc>]
+            outcome: <clean | required-iteration | scope-deviation>
+            ---
+
+            # Learning: PR #${{ github.event.pull_request.number }} — <short description>
+
+            ## What Was Specified
+            <Brief summary of what the issue asked for>
+
+            ## What Was Delivered
+            <Brief summary of what the PR actually contains>
+
+            ## Delta Analysis
+            <What differed between spec and delivery, if anything>
+
+            ## Learnings
+
+            ### For Future Issue Specs
+            <What should change about how we write issues for similar modules>
+
+            ### For Future Domain Warnings
+            <New warnings to add to PRDs or issues for similar work>
+
+            ### For AGENTS.md
+            <Any updates to the harness constitution worth considering>
+
+            ### Reusable Patterns
+            <Patterns worth codifying for future agent work>
+
+            ## Suggested Actions
+            - [ ] <Specific actionable items, e.g., "Add warning about X to PRD template">
+            - [ ] <e.g., "Update AGENTS.md section on test conventions">
+            ```
+
+            ## Step 4: Check for AGENTS.md updates
+
+            If the learnings suggest a change to AGENTS.md that would prevent a future failure:
+            - Make the edit directly
+            - Keep changes minimal and surgical
+            - Add a comment in the file noting which PR prompted the update
+
+            If the learning is informational only (no clear AGENTS.md change), skip this step.
+
+            ## Step 5: Commit and push
+
+            Stage your changes and commit:
+
+            ```
+            git add docs/learnings/
+            git add AGENTS.md  # only if modified
+            git commit -m "compound: learnings from PR #${{ github.event.pull_request.number }}"
+            git push origin main
+            ```
+
+            ## Step 6: Report
+
+            Output a brief summary:
+            - Outcome: clean | required-iteration | scope-deviation
+            - Learnings captured: N items
+            - AGENTS.md updated: yes/no
+            - Tags: [list]
+
+            ## What makes a good learning
+
+            Good learnings are:
+            - **Specific**: "The agent didn't handle 403 responses" not "error handling was bad"
+            - **Actionable**: Each learning should suggest a concrete change to specs, warnings, or process
+            - **Cumulative**: Reference existing learnings when patterns repeat — note the pattern, not just the instance
+            - **Honest**: If the issue spec was perfect and the agent nailed it, say so. Clean passes are worth documenting too — they confirm what works.
+
+            Bad learnings are:
+            - Vague ("could have been better")
+            - Blame-oriented ("the agent failed")
+            - Redundant (repeating what's already in docs/learnings/ without noting the pattern)
+
+            Now analyze PR #${{ github.event.pull_request.number }} and begin.
+
+      - name: Upload compound learning log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compound-learning-log
+          path: /home/runner/work/_temp/claude-execution-output.json

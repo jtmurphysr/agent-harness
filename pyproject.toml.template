@@ -1,0 +1,198 @@
+# pyproject.toml — Factory Harness Template
+#
+# USAGE: Copy this file into your new repo and replace all <PLACEHOLDER> values.
+# Remove comments before committing to a production repo — they're for orientation only.
+#
+# SECTIONS:
+#   [build-system]          — build toolchain config (rarely changes)
+#   [project]               — package identity, Python version, runtime dependencies
+#   [project.optional-dependencies] — dev/test toolchain
+#   [project.scripts]       — CLI entrypoints (omit if not a CLI tool)
+#   [tool.setuptools]       — module and package discovery
+#   [tool.pytest.ini_options] — test runner config
+#   [tool.coverage.run]     — coverage source and omit rules
+#   [tool.coverage.report]  — coverage report exclusion patterns
+#   [tool.ruff]             — linter/formatter config
+#   [tool.ruff.lint]        — lint rule selection
+#   [tool.ruff.lint.isort]  — import sort: first-party module declarations
+#   [tool.mypy]             — type checker config
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUILD SYSTEM
+# Standard setuptools config. Only change if switching to hatch/flit/poetry.
+# ─────────────────────────────────────────────────────────────────────────────
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PROJECT IDENTITY
+# ─────────────────────────────────────────────────────────────────────────────
+[project]
+name = "<project-name>"                    # kebab-case, matches repo name
+version = "0.1.0"                          # semver or date-versioned (v{YYYY}.{MM}.{DD})
+requires-python = ">=3.11"                 # 3.11 minimum for tomllib, match.case, etc.
+description = "<one-line description>"
+
+# RUNTIME DEPENDENCIES
+# Only list what the running application needs — not dev/test tools.
+# Pin minimums (>=), not exact versions, to avoid unnecessary conflicts.
+# Common candidates by project type:
+#
+#   All projects:
+#     pydantic>=2.7           — data validation and settings
+#     pydantic-settings>=2.3  — env/dotenv config management
+#     structlog>=24.1         — structured logging
+#     rich>=13                — terminal output formatting
+#     python-dotenv>=1.0      — .env file loading
+#
+#   API / web service:
+#     fastapi>=0.111          — web framework
+#     uvicorn[standard]>=0.30 — ASGI server
+#     httpx>=0.27             — async HTTP client
+#
+#   CLI tool:
+#     typer>=0.12             — CLI framework (wraps argparse)
+#
+#   Data / ML:
+#     pydantic>=2.7
+#     rapidfuzz>=3.9          — fuzzy string matching
+#
+#   Auth / integrations:
+#     PyJWT>=2.8              — JWT encode/decode
+#     cryptography>=42        — signing, encryption
+#
+# DROP anything not used — unused deps are attack surface and install bloat.
+dependencies = [
+    # <add runtime dependencies here>
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEV / TEST DEPENDENCIES
+# Installed via: pip install -e ".[dev]"
+# ─────────────────────────────────────────────────────────────────────────────
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",              # test runner
+    "pytest-asyncio>=0.23",   # async test support — keep even for sync projects, costs nothing
+    "pytest-cov>=5",          # coverage integration
+    "ruff>=0.4",              # linter + formatter
+    "mypy>=1.10",             # type checker
+    # "respx>=0.21",          # HTTP mock for httpx — add if project makes HTTP calls
+    # "types-PyYAML",         # mypy stubs — add if project uses PyYAML
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI ENTRYPOINTS (optional)
+# Exposes `<command>` as a terminal command after `pip install -e .`
+# Format: "<command-name>" = "<module>:<function>"
+# Omit this section entirely for library-only or non-CLI projects.
+# ─────────────────────────────────────────────────────────────────────────────
+[project.scripts]
+# <project-name> = "<module>:main"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MODULE DISCOVERY
+# py-modules: top-level .py files (not in a package directory)
+# packages:   directories with __init__.py
+#
+# SINGLE-FILE / FLAT LAYOUT (simple CLI tools, scripts):
+#   py-modules = ["entrypoint", "core_module"]
+#   packages = []
+#
+# MODULAR LAYOUT (services, APIs):
+#   py-modules = ["main"]
+#   packages = ["api", "services", "models", "db", "core"]
+#
+# MIXED (common in factory-generated projects):
+#   py-modules = ["entrypoint", "core"]
+#   packages = ["module_a", "module_b", "module_c"]
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.setuptools]
+py-modules = []   # <replace with top-level .py module names, without .py extension>
+packages = []     # <replace with package directory names>
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PYTEST
+# asyncio_mode = "auto" handles async tests without @pytest.mark.asyncio decorators.
+# Keep it — there's no cost even for fully sync projects.
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --tb=short"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COVERAGE
+#
+# omit rules:
+#   Always omit: tests/*, scripts/*, docs/*, .venv/*
+#   Stub omits:  Add entrypoint and any not-yet-implemented modules here.
+#                Remove from this list as real implementations land.
+#                The agent should update this list per-issue as stubs become real.
+#
+# IMPORTANT: The CI coverage gate will fail if uncovered stub code is not omitted.
+# This is intentional — stubs in omit = acknowledged debt, not hidden debt.
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    "scripts/*",
+    "docs/*",
+    ".venv/*",
+    # "<entrypoint>.py",   # omit entrypoint until integration tests exist
+    # "<stub_module>.py",  # remove when module is fully implemented
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "\\.\\.\\.",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RUFF — linter + formatter
+# line-length = 100 is the factory standard. Don't change without updating AGENTS.md.
+#
+# Rule sets:
+#   E, W   — pycodestyle errors and warnings
+#   F      — pyflakes (unused imports, undefined names)
+#   I      — isort (import ordering)
+#   B      — flake8-bugbear (likely bugs and design issues)
+#   C4     — flake8-comprehensions (unnecessary list/dict/set calls)
+#   UP     — pyupgrade (modernize syntax for target Python version)
+#   RUF    — ruff-native rules
+#   SIM    — flake8-simplify
+#
+# E501 (line too long) is ignored because ruff's formatter handles line length.
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+exclude = ["scripts/", "tests/"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "RUF", "SIM"]
+ignore = ["E501"]
+
+# first-party: list all internal modules so isort groups them correctly.
+# Add every entry from py-modules and packages above.
+[tool.ruff.lint.isort]
+known-first-party = []  # <replace with all internal module names>
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MYPY
+# strict = true enforces: no implicit Any, no untyped defs, no missing return types.
+# The agent must satisfy strict mode — do not lower this bar.
+# tests/ is excluded because test helpers often need type: ignore for mock patterns.
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+strict = true
+exclude = ["tests/", "scripts/"]

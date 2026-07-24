@@ -1,0 +1,9 @@
+-   id: validate-generated-files
+    name: Validate generated agent files
+    description: Check that generated files in .factory/agents/ match templates + context
+    entry: python scripts/validate_generated_files.py
+    language: system
+    args: [".factory"]
+    files: '^\.factory/.*$'
+    pass_filenames: false
+    require_serial: true

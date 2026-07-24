@@ -1,0 +1,447 @@
+name: Agent Dispatch
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to dispatch manually'
+        required: true
+        type: string
+
+jobs:
+  dispatch-on-label:
+    name: Dispatch Agent
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'issues' &&
+      github.event.label.name == 'agent-task' &&
+      !contains(github.event.issue.labels.*.name, 'human-review') &&
+      !contains(github.event.issue.labels.*.name, 'harness-gap')) ||
+      github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure git identity
+        run: |
+          git config --global user.name "claude-agent[bot]"
+          git config --global user.email "claude-agent[bot]@users.noreply.github.com"
+      - name: Check sequential dependency
+        id: dep-check
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ISSUE_NUM="${{ github.event.inputs.issue_number }}"
+          else
+            ISSUE_NUM="${{ github.event.issue.number }}"
+          fi
+          echo "issue_num=${ISSUE_NUM}" >> $GITHUB_OUTPUT
+          ISSUE_BODY=$(gh issue view "$ISSUE_NUM" \
+            --repo ${{ github.repository }} \
+            --json body -q '.body')
+          PREDECESSOR=$(echo "$ISSUE_BODY" \
+            | grep 'DEPENDS ON:' \
+            | sed 's/.*#\([0-9][0-9]*\).*/\1/' \
+            | head -1)
+          case "$PREDECESSOR" in
+            ''|*[!0-9]*)
+              echo "No numeric predecessor found. Proceeding."
+              echo "blocked=false" >> $GITHUB_OUTPUT
+              exit 0
+              ;;
+          esac
+          echo "Predecessor canonical: #$PREDECESSOR"
+          # Locate the GitHub issue whose title starts with "Issue #NNN:" matching
+          # the canonical harness number. Canonical numbers (001–033) differ from
+          # GitHub issue numbers, so we cannot compare them directly.
+          PREDECESSOR_GH=$(gh issue list \
+            --repo ${{ github.repository }} \
+            --state all --limit 200 \
+            --json number,title \
+            -q ".[] | select(.title | test(\"^Issue #0*${PREDECESSOR}[^0-9]\")) | .number" \
+            | head -1)
+          if [ -z "$PREDECESSOR_GH" ]; then
+            echo "No GitHub issue found for harness Issue #${PREDECESSOR} — assuming satisfied. Proceeding."
+            echo "blocked=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "Predecessor canonical #${PREDECESSOR} = GitHub #${PREDECESSOR_GH}"
+          PRED_STATE=$(gh issue view "$PREDECESSOR_GH" \
+            --repo ${{ github.repository }} \
+            --json state -q '.state')
+          echo "Predecessor GitHub #${PREDECESSOR_GH} state: ${PRED_STATE}"
+          if [ "$PRED_STATE" = "CLOSED" ]; then
+            echo "blocked=false" >> $GITHUB_OUTPUT
+          else
+            echo "blocked=true" >> $GITHUB_OUTPUT
+            echo "predecessor=$PREDECESSOR_GH" >> $GITHUB_OUTPUT
+          fi
+      - name: Halt — predecessor not closed
+        if: steps.dep-check.outputs.blocked == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          ISSUE_NUM="${{ steps.dep-check.outputs.issue_num }}"
+          PRED="${{ steps.dep-check.outputs.predecessor }}"
+          gh issue edit "$ISSUE_NUM" \
+            --repo ${{ github.repository }} \
+            --remove-label "agent-task"
+          gh issue comment "$ISSUE_NUM" \
+            --repo ${{ github.repository }} \
+            --body "Sequential gate: blocked. Predecessor GitHub #${PRED} is not yet closed. The agent-task label has been removed. Re-apply it once #${PRED} is closed to dispatch this agent."
+          echo "::error::Blocked — predecessor GitHub #${PRED} is not closed. Label removed."
+          exit 1
+      - name: Acknowledge dispatch
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          ISSUE_NUM: ${{ steps.dep-check.outputs.issue_num }}
+        run: |
+          gh issue comment "$ISSUE_NUM" \
+            --repo ${{ github.repository }} \
+            --body "Agent dispatched. Sequential dependency verified. Reading AGENTS.md and issue spec. Will open a PR when complete. Add human-review label at any time to block auto-merge. Comment /agent retry to re-dispatch if needed."
+      # mode: tag handles issues/comments (entity events) and respects label_trigger.
+      # mode: agent only handles workflow_dispatch/schedule (automation events).
+      # These two steps are mutually exclusive via if: conditions.
+      - name: Run Claude Code agent (label dispatch)
+        if: github.event_name == 'issues'
+        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GH_PAT }}
+          mode: tag
+          label_trigger: "agent-task"
+          allowed_tools: "Bash,Edit,Write,Read,Glob,Grep,LS,TodoRead,TodoWrite"
+          direct_prompt: |
+            You are operating in an agent-first repository.
+
+            MANDATORY FIRST STEPS — do these in order, before writing any code:
+            1. Read AGENTS.md in full. It is your operating constitution.
+            2. Read docs/PRD.md to ground yourself in the project domain.
+            3. Read docs/learnings/ — all files if present. Apply every warning.
+
+            Before writing a single line of code, output this confirmation:
+            "I am implementing [issue title]. The files I will create are: [list FILES TO CREATE from the issue spec]."
+
+            If you cannot complete that sentence from the issue spec, do not proceed.
+
+            Note: Sequential dependency has already been verified by the workflow gate.
+
+            GIT WORKFLOW — confirm branch before writing any file:
+            ISSUE_NUM="${{ steps.dep-check.outputs.issue_num }}"
+            CURRENT=$(git branch --show-current)
+            if [[ "$CURRENT" == claude/* ]]; then
+              echo "Already on harness branch: $CURRENT"
+            else
+              BRANCH="claude/issue-${ISSUE_NUM}-$(date +%Y%m%d-%H%M)"
+              git checkout -b "$BRANCH"
+              git push -u origin "$BRANCH"
+            fi
+
+            Never commit or push to main.
+      - name: Run Claude Code agent (workflow dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GH_PAT }}
+          mode: agent
+          allowed_tools: "Bash,Edit,Write,Read,Glob,Grep,LS,TodoRead,TodoWrite"
+          direct_prompt: |
+            You are operating in an agent-first repository.
+
+            MANDATORY FIRST STEPS — do these in order, before writing any code:
+            1. Read AGENTS.md in full. It is your operating constitution.
+            2. Read docs/PRD.md to ground yourself in the project domain.
+            3. Read docs/learnings/ — all files if present. Apply every warning.
+
+            Before writing a single line of code, output this confirmation:
+            "I am implementing [issue title]. The files I will create are: [list FILES TO CREATE from the issue spec]."
+
+            If you cannot complete that sentence from the issue spec, do not proceed.
+
+            Note: Sequential dependency has already been verified by the workflow gate.
+
+            GIT WORKFLOW — branch creation is the FIRST git operation:
+            ISSUE_NUM="${{ steps.dep-check.outputs.issue_num }}"
+            BRANCH="claude/issue-${ISSUE_NUM}-$(date +%Y%m%d-%H%M)"
+            git checkout -b "$BRANCH"
+            git push -u origin "$BRANCH"
+
+            Do not read, write, or create any file before the branch exists and is pushed.
+            Never commit or push to main.
+
+            YOUR TASK:
+            Fetch the full issue spec by running:
+              gh issue view ${{ steps.dep-check.outputs.issue_num }} --repo ${{ github.repository }}
+
+            SCOPE ENFORCEMENT — non-negotiable:
+            - Create ONLY the files listed in FILES TO CREATE in the issue spec.
+            - Modify ONLY the files listed in FILES TO MODIFY in the issue spec.
+            - Do NOT create any file not explicitly listed.
+            - Do NOT implement logic belonging to a later issue.
+            - If a dependency doesn't exist yet, stub it with a NotImplementedError.
+
+            BEFORE OPENING A PR — hard-required sequence, no exceptions:
+            1. mypy --strict .
+            2. pytest tests/ --cov=. -q
+            3. ruff check --fix .
+            4. ruff format .            ← LAST file-editing step — always
+            5. ruff check .             ← verify clean, no --fix flag
+            All five must exit 0. If any step fails: fix it, then restart from step 1.
+            ruff format MUST be the final edit before git add. Any code written after
+            ruff format runs will cause CI to fail on format check.
+
+            OPENING THE PR — use gh CLI:
+            ISSUE_NUM="${{ steps.dep-check.outputs.issue_num }}"
+            BRANCH=$(git branch --show-current)
+            gh pr create \
+              --title "Issue #${ISSUE_NUM}: $(gh issue view ${ISSUE_NUM} --repo ${{ github.repository }} --json title -q '.title')" \
+              --body "Implements Issue #${ISSUE_NUM}
+
+            Closes #${ISSUE_NUM}
+
+            Generated with Claude Code" \
+              --head "$BRANCH" \
+              --base main \
+              --repo ${{ github.repository }} \
+              --label "agent-task"
+
+            If a capability is missing:
+            - Do NOT approximate or work around it
+            - Open a separate issue with label harness-gap
+            - Comment on this issue referencing the blocker
+            - Do not open a partial PR
+      - name: Guard — abort if agent branch has no commits
+        if: success()
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUM: ${{ steps.dep-check.outputs.issue_num }}
+        with:
+          github-token: ${{ secrets.GH_PAT }}
+          script: |
+            const issueNum = process.env.ISSUE_NUM;
+            const branches = await github.rest.repos.listBranches({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const issueBranch = branches.data.find(b =>
+              b.name.startsWith(`claude/issue-${issueNum}-`)
+            );
+            if (!issueBranch) {
+              console.log('No agent branch found — skipping empty-branch guard.');
+              return;
+            }
+            const compare = await github.rest.repos.compareCommitsWithBasehead({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              basehead: `main...${issueBranch.name}`,
+            });
+            if (compare.data.ahead_by === 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parseInt(issueNum),
+                body: `Agent ran but produced **0 commits** on \`${issueBranch.name}\`. No PR created. Empty branch deleted.\n\nRe-dispatch: \`gh workflow run agent-dispatch.yml -f issue_number=${issueNum}\``,
+              });
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${issueBranch.name}`,
+              });
+              core.setFailed(`Agent produced 0 commits on ${issueBranch.name} — empty branch deleted, no PR created.`);
+            } else {
+              console.log(`Branch ${issueBranch.name} has ${compare.data.ahead_by} commit(s) vs main — proceeding.`);
+            }
+
+      - name: Create PR from agent branch (fallback)
+        if: success()
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUM: ${{ steps.dep-check.outputs.issue_num }}
+        with:
+          github-token: ${{ secrets.GH_PAT }}
+          script: |
+            const issueNum = process.env.ISSUE_NUM || context.issue.number;
+            const branches = await github.rest.repos.listBranches({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const issueBranch = branches.data.find(b =>
+              b.name.startsWith(`claude/issue-${issueNum}-`)
+            );
+            if (!issueBranch) {
+              console.log('No agent branch found — agent may have opened PR directly.');
+              return;
+            }
+            const existingPRs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${issueBranch.name}`,
+              state: 'open',
+            });
+            if (existingPRs.data.length > 0) {
+              console.log(`PR already exists: #${existingPRs.data[0].number}`);
+              return;
+            }
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Issue #${issueNum}`,
+              body: `Implements Issue #${issueNum}\n\nCloses #${issueNum}\n\nGenerated with Claude Code`,
+              head: issueBranch.name,
+              base: 'main',
+            });
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.data.number,
+              labels: ['agent-task'],
+            });
+
+      - name: Ensure PR body contains Closes reference
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUM: ${{ steps.dep-check.outputs.issue_num }}
+        with:
+          github-token: ${{ secrets.GH_PAT }}
+          script: |
+            const issueNum = process.env.ISSUE_NUM;
+            // Find any open PR for this issue's branch
+            const branches = await github.rest.repos.listBranches({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const issueBranch = branches.data.find(b =>
+              b.name.startsWith(`claude/issue-${issueNum}-`)
+            );
+            if (!issueBranch) return;
+
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${issueBranch.name}`,
+              state: 'open',
+            });
+            if (prs.data.length === 0) return;
+
+            const pr = prs.data[0];
+            const body = pr.body || '';
+            if (/Closes\s+#\d+/i.test(body)) {
+              console.log(`PR #${pr.number} already has Closes reference.`);
+              return;
+            }
+
+            const newBody = body + `\n\nCloses #${issueNum}`;
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              body: newBody,
+            });
+            console.log(`Patched PR #${pr.number} — appended Closes #${issueNum}`);
+
+  dispatch-on-retry:
+    name: Retry Agent
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'issue_comment' &&
+      startsWith(github.event.comment.body, '/agent retry') &&
+      contains(github.event.issue.labels.*.name, 'agent-task')
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure git identity
+        run: |
+          git config --global user.name "claude-agent[bot]"
+          git config --global user.email "claude-agent[bot]@users.noreply.github.com"
+      - name: Check sequential dependency (retry)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          ISSUE_NUM="${{ github.event.issue.number }}"
+          ISSUE_BODY=$(gh issue view "$ISSUE_NUM" \
+            --repo ${{ github.repository }} \
+            --json body -q '.body')
+          PREDECESSOR=$(echo "$ISSUE_BODY" \
+            | grep 'DEPENDS ON:' \
+            | sed 's/.*#\([0-9][0-9]*\).*/\1/' \
+            | head -1)
+          case "$PREDECESSOR" in
+            ''|*[!0-9]*)
+              echo "No numeric predecessor found. Proceeding with retry."
+              exit 0
+              ;;
+          esac
+          echo "Predecessor canonical: #$PREDECESSOR"
+          PREDECESSOR_GH=$(gh issue list \
+            --repo ${{ github.repository }} \
+            --state all --limit 200 \
+            --json number,title \
+            -q ".[] | select(.title | test(\"^Issue #0*${PREDECESSOR}[^0-9]\")) | .number" \
+            | head -1)
+          if [ -z "$PREDECESSOR_GH" ]; then
+            echo "No GitHub issue found for harness Issue #${PREDECESSOR} — assuming satisfied. Proceeding with retry."
+            exit 0
+          fi
+          PRED_STATE=$(gh issue view "$PREDECESSOR_GH" \
+            --repo ${{ github.repository }} \
+            --json state -q '.state')
+          echo "Predecessor canonical #${PREDECESSOR} = GitHub #${PREDECESSOR_GH} state: ${PRED_STATE}"
+          if [ "$PRED_STATE" != "CLOSED" ]; then
+            gh issue comment "$ISSUE_NUM" \
+              --repo ${{ github.repository }} \
+              --body "Retry blocked — predecessor GitHub #${PREDECESSOR_GH} (harness #${PREDECESSOR}) is not yet closed. Close it first, then retry."
+            echo "::error::Retry blocked — predecessor GitHub #${PREDECESSOR_GH} is not closed."
+            exit 1
+          fi
+      - name: Acknowledge retry
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: 'Agent retrying. Reading current state and diagnosing previous attempt.'
+            });
+      - name: Run Claude Code agent (retry)
+        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GH_PAT }}
+          mode: tag
+          trigger_phrase: "/agent retry"
+          allowed_tools: "Bash,Edit,Write,Read,Glob,Grep,LS,TodoRead,TodoWrite"
+          direct_prompt: |
+            You are retrying a previous agent task on issue #${{ github.event.issue.number }}.
+
+            FIRST: Read AGENTS.md in full.
+            SECOND: Read docs/PRD.md to re-ground yourself in the project domain.
+            THIRD: Read docs/learnings/ — all files.
+            FOURTH: Check if a PR already exists and review CI failures.
+            FIFTH: Diagnose the failure. Fix only what failed. Do not rewrite correct code.
+
+            If no branch exists yet for this issue, create one first:
+            ISSUE_NUM="${{ github.event.issue.number }}"
+            BRANCH="claude/issue-${ISSUE_NUM}-$(date +%Y%m%d-%H%M)"
+            git checkout -b "$BRANCH"
+            git push -u origin "$BRANCH"
+
+            Issue: ${{ github.event.issue.title }}
+            Body:
+            ---
+            ${{ github.event.issue.body }}
+            ---

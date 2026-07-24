@@ -1,0 +1,93 @@
+name: Garbage Collection Agent
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Mondays 09:00 UTC
+  workflow_dispatch:
+
+jobs:
+  gc-agent:
+    name: Entropy Pass
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run structural linter report
+        id: harness_check
+        run: |
+          python scripts/validate_harness.py --report > harness_report.txt 2>&1 || true
+          echo "report<<EOF" >> $GITHUB_OUTPUT
+          cat harness_report.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run coverage report
+        id: coverage
+        run: |
+          pytest tests/ --cov=. --cov-report=term-missing -q > coverage_report.txt 2>&1 || true
+          echo "report<<EOF" >> $GITHUB_OUTPUT
+          cat coverage_report.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run GC agent
+        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GH_PAT }}
+          mode: agent
+          direct_prompt: |
+            You are the garbage collection agent for this repository.
+            Read AGENTS.md first for project context and module boundaries.
+            Your job is preventing entropy. Run the following checks and open
+            a single PR with label `gc` for all fixes. If nothing needs fixing,
+            do nothing — no empty PRs.
+
+            CHECKS:
+
+            1. Documentation staleness
+               - Compare `docs/` against actual code in source modules
+               - Fix any docs describing behavior that no longer exists
+               - Add documentation for any patterns not yet captured
+
+            2. AGENTS.md integrity
+               - Verify boundary rules match actual module structure
+               - Update if new modules exist that aren't covered
+
+            3. Data contract schema drift
+               - Verify any output schemas match their Pydantic models in `models.py`
+               - Flag drift as a `human-review` issue if found
+
+            4. Dead code
+               - Identify functions/classes with no callers
+               - Do NOT delete — open a `human-review` issue per finding
+
+            5. Test coverage regressions
+               - For any module below 85%, open an `agent-task` issue describing
+                 exactly which lines need coverage
+
+            6. Dependency hygiene
+               - Fix unused imports that ruff can auto-fix
+               - Flag any dependency in pyproject.toml not imported anywhere
+
+            HARNESS REPORT (this run):
+            ${{ steps.harness_check.outputs.report }}
+
+            COVERAGE REPORT (this run):
+            ${{ steps.coverage.outputs.report }}
+
+            PR requirements if changes found:
+            - Title: "gc: entropy pass $(date +%Y-%m-%d)"
+            - Body: list every change and why
+            - Label: `gc`
+            - All CI checks must pass

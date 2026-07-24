@@ -1,0 +1,221 @@
+name: PRD to Issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — print issues without creating them'
+        type: boolean
+        default: false
+
+jobs:
+  generate-issues:
+    name: Generate Issues from PRD
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — skip if agent-task issues already exist
+        id: guard
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          COUNT=$(gh issue list \
+            --repo ${{ github.repository }} \
+            --label agent-task \
+            --state open \
+            --json number \
+            -q 'length')
+          if [ "$COUNT" -gt 0 ]; then
+            echo "::notice::${COUNT} open agent-task issue(s) already exist — skipping issue generation to prevent duplicates. Close or remove the agent-task label from existing issues first."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Read PRD and generate issues
+        if: steps.guard.outputs.skip != 'true'
+        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GH_PAT }}
+          mode: agent
+          allowed_tools: "Bash(gh:*),Read,Write,Edit,LS,Glob,Grep,TodoWrite"
+          direct_prompt: |
+            You are the Issues Agent for this repository's autonomous development harness.
+
+            Your job is to read docs/PRD.md and produce a complete, sequenced set of
+            agent-executable GitHub issues using the harness issue template.
+
+            ## Step 1: Read your inputs
+
+            Read these files before doing anything else:
+            - docs/PRD.md — the product requirements
+            - AGENTS.md — harness constraints and module boundaries
+            - .github/ISSUE_TEMPLATE/agent-task.md — the issue contract you must follow
+            - docs/issues/ — any existing issue specs for reference
+            - docs/learnings/ — compound learnings from previous cycles (if any exist)
+
+            If docs/learnings/ contains files, read them. These are structured learnings
+            from previous agent work. Use them to:
+            - Add domain warnings that were discovered during implementation
+            - Strengthen interface contracts based on past mismatches
+            - Avoid specification gaps that caused previous iterations
+            - Apply reusable patterns that proved effective
+
+            ## Step 2: Derive the module map
+
+            From the PRD's module map section, determine:
+            - Every module that needs to be built
+            - The dependency order (which modules must exist before others)
+            - Which modules share boundaries (what each module may and may not import)
+
+            ## Step 3: Apply the canonical issue sequence
+
+            Always follow this dependency ordering:
+            1. models.py — data schemas, no dependencies on other project modules
+            2. auth/ modules — credential lifecycle, depends only on models
+            3. clients/ modules — external API I/O, depends on auth and models
+            4. services/ or resolvers/ — business logic, depends on clients and models
+            5. pipeline.py — orchestration, depends on clients and services
+            6. reporter.py — output layer, depends on models only
+            7. entrypoint (main.py, cli.py, app.py) — wiring layer, depends on everything
+            8. tests/integration — full stack tests, depends on everything
+            9. gc-agent — entropy pass, cleanup, conventions
+
+            Adapt this sequence to the PRD's actual module map. Not every project
+            needs every layer. Add modules as needed, maintain the dependency discipline.
+
+            ## Step 3.5: Estimate LOE for each issue
+
+            Before writing any issue spec, score each module's Level of Effort using
+            this rubric. Record the score — it becomes a required field in every issue.
+
+            LOE TIERS:
+              Low     — New greenfield file(s), isolated module, 0-1 dep issues,
+                        no existing code to read or integrate
+              Medium  — New file with interface matching, 2-3 dep chain,
+                        moderate integration with 1-2 prior modules
+              High    — Modify existing file(s), OR integrates 3+ prior modules,
+                        OR dep chain of 4-5 issues
+              X-High  — Cross-cutting concern (middleware, auth interceptor, shared
+                        schema change affecting all endpoints), OR modifies multiple
+                        existing files, OR wires together 4+ prior modules,
+                        OR dep chain of 6+ issues
+
+            SCORING SIGNALS (additive — start at Low, escalate on each hit):
+              +1 tier  FILES TO MODIFY is non-empty (modifying existing > creating new)
+              +1 tier  Cross-cutting: middleware, interceptor, decorator applied globally
+              +1 tier  Integration/wiring of 3+ previously-built modules
+              +1 tier  Dep chain depth ≥ 4 issues
+              Cap at X-High
+
+            EXAMPLES:
+              models.py (Issue #1, no deps, greenfield)              → Low
+              auth/ module (Issue #2, depends on #1, new file)       → Low-Medium
+              server.py wiring (modifies existing + mounts 3 modules
+                from issues #3-#6 + cross-cutting middleware)        → X-High
+
+            ## Step 4: Write each issue spec
+
+            For EACH module, produce a complete issue following the agent-task.md template.
+            Every section is required. Do not skip any section.
+
+            Critical rules:
+            - models.py is ALWAYS Issue #001
+            - Each issue has EXACTLY ONE predecessor (no parallel issues)
+            - Out of scope items from the PRD must appear in EVERY issue's OUT OF SCOPE section
+            - Domain warnings from the PRD must become ⚠️ WARNING blocks in relevant issues
+            - Test cases must be NAMED FUNCTIONS in a table — never "write comprehensive tests"
+            - Coverage omit delta must be explicit in every issue
+            - Interface contracts must include full type signatures
+
+            ## Step 5: Create the issues in GitHub
+
+            For each issue spec (in order):
+
+            Use the gh CLI to create each issue:
+
+            gh issue create \
+              --title "Issue #NNN: <module> — <description>" \
+              --body "<full issue spec as plain text>" \
+              --label "agent-task"
+
+            IMPORTANT: Write the body as plain text, not markdown tables.
+            GitHub's web UI handles markdown tables poorly — use plain text formatting.
+            Use this structure for each issue body:
+
+            ---
+            DEPENDS ON: #NNN — <title>
+            ESTIMATED LOE: <Low | Medium | High | X-High>
+            LOE FACTORS: <one-line summary of which signals drove the score>
+
+            FILES TO CREATE:
+            <list>
+
+            FILES TO MODIFY:
+            <list>
+
+            OUT OF SCOPE:
+            <list>
+
+            INTERFACE CONTRACT:
+            <signatures>
+
+            DOMAIN WARNINGS:
+            <warnings>
+
+            REQUIRED TESTS:
+            <named test functions as a list>
+
+            COVERAGE REQUIREMENTS:
+            <per-file targets>
+
+            COVERAGE OMIT DELTA:
+            <what to add/remove from pyproject.toml omit list>
+
+            DEFINITION OF DONE:
+            <checklist>
+            ---
+
+            ## Step 6: Report
+
+            After creating all issues, output a summary:
+            - Total issues created: N
+            - Issue sequence: #1 → #2 → ... → #N
+            - First issue ready for dispatch: add agent-task label to #1 to begin
+
+            ## Dry run mode
+
+            If ${{ github.event.inputs.dry_run }} is true:
+            - Print each issue spec to stdout
+            - Do NOT call gh issue create
+            - End with "DRY RUN COMPLETE — N issues would be created"
+
+            ## What makes a good issue
+
+            You have seen the harness fail when issues are underspecified. The most
+            common failure modes are:
+
+            1. Missing interface contracts — agent invents signatures that don't compose
+            2. "Write comprehensive tests" — agent writes whatever it thinks is comprehensive
+            3. Missing domain warnings — agent hits known API landmines
+            4. Missing coverage omit delta — pyproject.toml drifts out of sync
+            5. Vague out of scope — agent creeps into adjacent modules
+
+            Every issue you write must be tight enough that an agent can implement it
+            correctly on the first attempt without asking clarifying questions.
+
+            Now read docs/PRD.md and begin.
+
+      - name: Upload Claude execution log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-execution-log
+          path: /home/runner/work/_temp/claude-execution-output.json

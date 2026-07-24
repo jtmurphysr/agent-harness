@@ -1,0 +1,22 @@
+name: PRD Changed
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/PRD.md'
+
+jobs:
+  dispatch:
+    name: Trigger Issue Generation
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch PRD to Issues workflow
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh workflow run "PRD to Issues" \
+            --repo ${{ github.repository }} \
+            --field dry_run=false
