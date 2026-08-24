@@ -264,6 +264,32 @@ The harness was validated end-to-end on [playlist-migrate](https://github.com/jt
 
 ---
 
+## Claude Code Hooks
+
+`.claude/hooks/` holds two lifecycle hooks that run for anyone working on this repo with Claude Code. They are deterministic: they fire whether or not the model cooperates.
+
+| Hook | Event | Behaviour on its own failure |
+|---|---|---|
+| `inject-context.sh` | `SessionStart` | **Fails open.** Injects five sections of `AGENTS.md` (6,671 chars — the file exceeds the 10,000-char hook-output cap, so it is excerpted by heading name). A session without the preamble is degraded, not unsafe, and `SessionStart` cannot block anyway. |
+| `gate-done.sh` | `Stop` | **Fails closed.** Runs `validate_harness.py` then `pytest`, cheapest first, mirroring CI. The model declaring completion is a claim; a green suite is a receipt. |
+
+Both source `lib/preamble.sh`, whose contract is that **helpers return non-zero and never exit** — exiting from inside `$( )` kills only the subshell, after which the hook proceeds to `exit 0` and allows the call it just printed `BLOCKED` for.
+
+Two things worth knowing before editing them:
+
+- **`exit 2` blocks; `exit 1` does not.** `validate_harness.py` exits 1 on violations, which is correct for CI and inert in a hook — `gate-done.sh` translates it. Wire that script in directly and the gate silently passes every violation it finds.
+- **`CLAUDE_PROJECT_DIR` must be checked before the `source`.** `die_closed` lives in the file that line loads, and both `set -u` and `${VAR:?}` exit 1 there — non-blocking. A fail-closed hook with that bug silently is not there.
+
+```bash
+.claude/hooks/test-hooks.sh    # 27 assertions, one per bug that actually shipped
+```
+
+That suite runs in CI as **Hook Guards** and is a required status check, so a broken guard blocks the merge rather than reporting into the void.
+
+The reasoning behind all of this is written up in [claude-code-hooks-guide](https://github.com/jtmurphysr/claude-code-hooks-guide), which uses these two hooks as its worked examples.
+
+---
+
 ## Label Reference
 
 | Label | Meaning |
