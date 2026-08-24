@@ -5,5 +5,29 @@
       "Bash(python3 -m ruff format *)",
       "Bash(ruff check *)"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/inject-context.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-done.sh",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
   }
 }

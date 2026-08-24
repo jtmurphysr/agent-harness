@@ -1,0 +1,29 @@
+# Code owners for agent-harness.
+#
+# Single-maintainer repo today, so every line resolves to the same person. That
+# is deliberate rather than redundant: the paths below are the ones where a
+# review is load-bearing regardless of who is on the other side of it, and
+# listing them now means the policy already exists when a second maintainer
+# arrives instead of being retrofitted after the first bad merge.
+#
+# Order matters — the LAST matching pattern wins.
+
+# Default owner for everything.
+*                       @jtmurphysr
+
+# ---------------------------------------------------------------------------
+# Executable configuration. These run on an engineer's machine with that
+# engineer's full privileges — no sandbox, no isolation. Hook config is code
+# that ships in the repo, and it gets reviewed like build tooling.
+# ---------------------------------------------------------------------------
+/.claude/               @jtmurphysr
+/.github/workflows/     @jtmurphysr
+/.pre-commit-hooks.yaml @jtmurphysr
+
+# ---------------------------------------------------------------------------
+# Structural invariants. scripts/validate_harness.py enforces the module
+# boundaries declared in AGENTS.md; changing either one changes what "done"
+# means for every agent operating in this repo.
+# ---------------------------------------------------------------------------
+/AGENTS.md              @jtmurphysr
+/scripts/validate_harness.py  @jtmurphysr
