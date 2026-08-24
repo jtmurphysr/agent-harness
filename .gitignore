@@ -7,3 +7,31 @@
 .claude/worktrees/
 .workstream
 claude_continuity
+
+# ---------------------------------------------------------------------------
+# Python bytecode and build artifacts.
+#
+# 93 of this repo's 212 tracked files were committed .pyc -- 44% -- carrying
+# three different interpreter/pytest tags (313, 313-pytest-8.3.5,
+# 313-pytest-9.1.1). They conflict on every branch that touches a module and
+# encode nothing a reader or an agent can use. Untracked in the same commit
+# that added these rules.
+#
+# .venv/ is load-bearing beyond hygiene: gate-done.sh's py_touched() calls
+# `git ls-files --others --exclude-standard` to decide whether an absent pytest
+# is a real gap or nothing to check. Unignored, the vendored .py files under
+# .venv/ make that answer "yes" every single time.
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Tool caches — all regenerable, none reviewable.
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
