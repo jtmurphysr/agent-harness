@@ -165,9 +165,49 @@ jobs:
 
             Now analyze PR #${{ github.event.pull_request.number }} and begin.
 
+      # The deliverable is docs/learnings/pr-<N>.md committed to main -- Step 3
+      # writes it, Step 5 pushes it. The artifact below is only an execution
+      # log, so uploading it proves nothing about whether a learning exists.
+      #
+      # From April 27 to 2026-08-24 this job reported success on every run while
+      # ANTHROPIC_API_KEY did not exist as a repo secret. The action received an
+      # empty key, no-op'd in 2.1s, exited 0; the upload found no file and
+      # `if-no-files-found` defaulted to `warn`, which also exits 0. Four months
+      # of green checks and zero learnings, with nothing anywhere saying so.
+      #
+      # Checking origin/main rather than the working tree is deliberate: the
+      # agent can write the file and still fail to push, and an unpushed
+      # learning is not a learning.
+      - name: Verify the learning landed on main
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          f="docs/learnings/pr-${PR}.md"
+          git fetch --quiet origin main
+          if ! git cat-file -e "origin/main:$f" 2>/dev/null; then
+            echo "::error::$f is absent from origin/main -- the compound-learning agent produced no committed learning for PR #${PR}."
+            echo "origin/main is at $(git rev-parse --short origin/main)"
+            echo "docs/learnings/ on origin/main contains:"
+            git ls-tree --name-only "origin/main:docs/learnings" 2>/dev/null | sed 's/^/  /' \
+              || echo "  <directory absent>"
+            exit 1
+          fi
+          bytes=$(git cat-file -s "origin/main:$f")
+          # The prompt's template alone exceeds this. 200B catches a stub or an
+          # empty write without being brittle about how verbose a learning is.
+          if [ "$bytes" -lt 200 ]; then
+            echo "::error::$f is only ${bytes}B on origin/main -- too small to be a real learning."
+            exit 1
+          fi
+          echo "$f present on origin/main (${bytes}B)"
+
       - name: Upload compound learning log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: compound-learning-log
           path: /home/runner/work/_temp/claude-execution-output.json
+          # Default is `warn`, which uploads nothing and exits 0. If the action
+          # ran at all it wrote this file, so its absence is signal, not noise.
+          if-no-files-found: error
