@@ -52,10 +52,13 @@ if ! harness_out=$("$PY" scripts/validate_harness.py 2>&1); then
 fi
 
 # ---- 2. test suite ----------------------------------------------------------
-set +e
+# No set +e/-e dance here. errexit was never on (header is `set -uo pipefail`),
+# so `set +e` would be a no-op and the matching `set -e` would ENABLE errexit
+# for everything after it -- under which any stray non-zero exits 1, which is
+# non-blocking, and this gate silently passes. Capturing rc directly needs no
+# errexit change at all.
 test_out=$("$PY" -m pytest tests/ -q -m "not slow" 2>&1)
 rc=$?
-set -e
 
 case "$rc" in
   0) ;;

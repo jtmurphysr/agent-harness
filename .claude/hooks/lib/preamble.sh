@@ -44,16 +44,31 @@ read_payload() {
   printf '%s' "$p"
 }
 
-# jq -e exits non-zero on null/false, so a missing field is an error, not "".
-# Returns jq's status.  Call: file=$(field '.a.b') || die_closed "..."
+# Missing field -> non-zero. A field that is legitimately `false` -> "false", 0.
+#
+# Do NOT use `jq -e` here. -e sets exit 1 when the last output is false OR null,
+# AND STILL PRINTS IT. So `jq -er` on a real `false` printed "false" and exited
+# 1: field() treated a healthy payload as schema drift and die_closed blocked,
+# while field_opt() appended its default and returned "false\nfalse". Branch on
+# the output instead of the status.
+#
+# Call: file=$(field '.a.b') || die_closed "..."
 field() {
-  jq -er "$1" <<<"$PAYLOAD" 2>/dev/null
+  local out
+  out=$(jq -r "$1" <<<"$PAYLOAD" 2>/dev/null) || return 1
+  [ "$out" = "null" ] && return 1
+  printf '%s' "$out"
 }
 
-# Same, but a missing field is legitimately absent rather than schema drift.
+# Same, but the field is legitimately optional rather than schema drift.
 # Call: flag=$(field_opt '.stop_hook_active' 'false')
 field_opt() {
-  jq -er "$1" <<<"$PAYLOAD" 2>/dev/null || printf '%s' "${2-}"
+  local out
+  out=$(jq -r "$1" <<<"$PAYLOAD" 2>/dev/null) || { printf '%s' "${2-}"; return 0; }
+  case "$out" in
+    ""|null) printf '%s' "${2-}" ;;
+    *)       printf '%s' "$out" ;;
+  esac
 }
 
 # Claude Code truncates hook output past 10k chars to a file + preview, which is
