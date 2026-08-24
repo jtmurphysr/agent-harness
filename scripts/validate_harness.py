@@ -31,19 +31,42 @@ except ImportError:
 # Keys are top-level module names (directories) or filenames without .py.
 # Values are sets of module names that the key module is allowed to import from.
 #
-# Update this dict when you set up your project's module structure.
-# These example rules enforce a layered CLI architecture:
-#   auth → clients → resolvers/pipeline → reporter
-#   models is shared and imports nothing internal.
+# This map held the template's EXAMPLE modules -- auth/clients/resolvers/
+# pipeline/reporter/models -- until 2026-08-24. None of them exist in this repo,
+# so INTERNAL_MODULES resolved to nothing on disk, Pass 1 walked zero files, and
+# "Harness Structure" passed green as a required check while verifying nothing.
+# AGENTS.md still carries the same unfilled placeholder; the templating step was
+# never completed. Below is this repo's real graph, derived by AST-walking every
+# package in pyproject's packages list.
 # ─────────────────────────────────────────────────────────────────
 ALLOWED_IMPORTS: dict[str, set[str]] = {
-    "auth": {"models"},
-    "clients": {"auth", "models"},
-    "resolvers": {"models"},
-    "pipeline": {"clients", "resolvers", "models", "reporter"},
-    "reporter": {"models"},
-    "models": set(),
+    # Leaves — import nothing internal.
+    "interview": set(),
+    "notifications": set(),
+    "renderer": set(),
+    "verdict_store": set(),
+    # Mid layer.
+    "github": {"reviewers"},
+    "reviewers": {"github"},
+    # Orchestrators.
+    "stonehaven": {"github", "notifications", "reviewers", "verdict_store"},
+    "cli": {"github", "interview", "renderer", "stonehaven"},
+    # `templates` is in pyproject's packages list but holds 6 .md files and zero
+    # .py, so nothing can import it and it is not an internal module here.
 }
+
+# Cycles present when this map was first written, accepted explicitly so that
+# any NEW cycle fails. A baseline, not an amnesty -- one line to delete once the
+# refactor lands.
+#
+#   github/issues.py:20      from reviewers.verdicts import Finding
+#   reviewers/dispatch.py:11 from github.pr import PRDiff
+#
+# Both are type-only imports, the usual sign that two names belong in a shared
+# module neither package owns. Breaking it is a code change across two packages
+# covered by 471 tests, deliberately not bundled into a commit whose job is to
+# make this linter read real files.
+KNOWN_CYCLES: set[frozenset[str]] = {frozenset({"github", "reviewers"})}
 
 INTERNAL_MODULES = set(ALLOWED_IMPORTS.keys())
 REPO_ROOT = Path(".")
@@ -331,6 +354,20 @@ def main() -> None:
     boundary_result = run_lint()
     print(f"   Files checked: {boundary_result.files_checked}")
 
+    # Zero files is not a clean repo, it is a linter pointed at nothing. This
+    # exact state -- ALLOWED_IMPORTS naming modules that do not exist -- shipped
+    # here for months and reported "✅ No boundary violations found" on every
+    # run, as a required status check. A check that cannot fail is a decoration.
+    missing = sorted(m for m in INTERNAL_MODULES if not (REPO_ROOT / m).is_dir())
+    if boundary_result.files_checked == 0:
+        print("   ❌ Checked 0 files — the linter is not pointed at this repo.")
+        if missing:
+            print(f"      ALLOWED_IMPORTS names modules with no directory: {', '.join(missing)}")
+        print("      Fix ALLOWED_IMPORTS (and AGENTS.md's boundary table) to name real modules.")
+        sys.exit(1)
+    if missing:
+        print(f"   ⚠️  Declared but absent from disk: {', '.join(missing)}")
+
     if boundary_result.clean:
         print("   ✅ No boundary violations found.")
     else:
@@ -340,6 +377,35 @@ def main() -> None:
             for line in v.message.splitlines():
                 print(f"    {line}")
             print()
+
+    # ── Pass 1b: Import cycles ──
+    # Declared-graph cycles, not observed ones: ALLOWED_IMPORTS is the contract,
+    # and a cycle written into the contract is one nobody has to notice again.
+    print()
+    print("── Pass 1b: Import cycles ──")
+    cycles = {
+        frozenset({a, b})
+        for a, deps in ALLOWED_IMPORTS.items()
+        for b in deps
+        if a in ALLOWED_IMPORTS.get(b, set())
+    }
+    new_cycles = sorted(tuple(sorted(c)) for c in cycles - KNOWN_CYCLES)
+    stale = sorted(tuple(sorted(c)) for c in KNOWN_CYCLES - cycles)
+    for c in sorted(tuple(sorted(c)) for c in cycles & KNOWN_CYCLES):
+        print(f"   ⚠️  Known cycle, accepted: {c[0]} ↔ {c[1]}")
+    if stale:
+        # The baseline outlived the cycle. Say so -- a stale exception is how an
+        # allowlist quietly grows into a blanket.
+        for c in stale:
+            print(f"   ⚠️  KNOWN_CYCLES lists {c[0]} ↔ {c[1]}, which no longer exists. Delete it.")
+    if new_cycles:
+        print(f"   ❌ {len(new_cycles)} new import cycle(s):\n")
+        for c in new_cycles:
+            print(f"      {c[0]} ↔ {c[1]}")
+        print("\n      Add to KNOWN_CYCLES only with a written reason. Prefer breaking it.")
+        sys.exit(1)
+    if not cycles:
+        print("   ✅ No cycles.")
 
     # ── Pass 2: Coverage omit drift ──
     print()

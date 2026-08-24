@@ -47,9 +47,18 @@ fail() {
   exit 2
 }
 
-# Did this turn touch Python? Uncommitted work, staged work, untracked files,
-# and anything committed locally that the upstream does not have yet -- an agent
-# may edit and stop, or commit and stop, and both are "this turn."
+# Did this turn touch anything the suite covers? Uncommitted work, staged work,
+# untracked files, and anything committed locally that the upstream does not
+# have yet -- an agent may edit and stop, or commit and stop, and both are
+# "this turn."
+#
+# Deliberately wider than *.py. The first version matched `\.py$` only, and the
+# compound-learning agent found the hole one cycle later: tests/test_templates.py
+# and tests/test_shared_partials.py assert on templates/*.md, so editing a
+# template read as "nothing to verify" and skipped the very tests covering it.
+# Demonstrated, not theorised -- py_touched returned false for a modified
+# templates/sre.template.md. pyproject/setup.cfg/tox.ini move coverage floors
+# and dependency pins, which decide whether the suite means anything.
 #
 # Returns TRUE when it cannot tell. A gate that answers "nothing changed"
 # because git was unavailable would skip the suite exactly when it is least
@@ -64,7 +73,7 @@ py_touched() {
     if up=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null); then
       git diff --name-only "$up...HEAD" 2>/dev/null
     fi
-  } | grep -qE '\.py$'
+  } | grep -qE '\.(py|toml|cfg|ini)$|^templates/|^tests/'
 }
 
 # ---- 1. structural invariants (stdlib only, fast, no install needed) ---------
