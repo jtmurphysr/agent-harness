@@ -93,22 +93,53 @@ STUB
 chmod +x "$_stub"
 
 _payload='{"session_id":"t","stop_hook_active":false}'
-_probe="tests/_gate_probe_$$.py"
 
-# No Python touched: nothing for pytest to verify, so its absence is not a gap.
-# Guards the doc-only turn -- compound-learning.yml has no setup-python and no
-# pip install, and gating a Markdown write behind a test runner that cannot
-# exist there blocks every run of it.
-echo "$_payload" | HARNESS_PYTHON="$_stub" bash .claude/hooks/gate-done.sh >/dev/null 2>&1
-is "absent pytest + no Python touched exits 0 (skip)" "0" "$?"
+# These run in a scratch repo, not this one. The first version asserted against
+# the ambient working tree and passed only while that tree happened to have no
+# Python changes -- it broke the moment this very commit edited a .py. A test
+# whose result depends on what else is dirty is not a test. The scratch repo
+# also means the template case stops mutating real files under templates/.
+_scratch=$(mktemp -d); trap 'rm -f "$_stub"; rm -rf "$_scratch"' EXIT
+mkdir -p "$_scratch/.claude/hooks/lib" "$_scratch/scripts"
+cp .claude/hooks/gate-done.sh      "$_scratch/.claude/hooks/"
+cp .claude/hooks/lib/preamble.sh   "$_scratch/.claude/hooks/lib/"
+: > "$_scratch/scripts/validate_harness.py"   # stub: parses, exits 0
+git -C "$_scratch" init -q
+git -C "$_scratch" add -A
+git -C "$_scratch" -c user.email=t@t -c user.name=t commit -qm init
 
-# Python touched: the gate cannot verify the change, so it must block. This is
-# the assertion that keeps the skip above from becoming a hole.
-printf '# gate probe\n' > "$_probe"
-echo "$_payload" | HARNESS_PYTHON="$_stub" bash .claude/hooks/gate-done.sh >/dev/null 2>&1
-_rc=$?
-rm -f "$_probe"
-is "absent pytest + Python touched blocks (2)" "2" "$_rc"
+_gate() {  # $1 = label, $2 = expected rc; runs gate-done in the scratch repo
+  echo "$_payload" | CLAUDE_PROJECT_DIR="$_scratch" HARNESS_PYTHON="$_stub" \
+    bash "$_scratch/.claude/hooks/gate-done.sh" >/dev/null 2>&1
+  is "$1" "$2" "$?"
+}
+
+# Clean tree: nothing for pytest to verify, so its absence is not a gap. This is
+# the doc-only turn -- compound-learning.yml has no setup-python and no pip
+# install, so gating a Markdown write on a test runner that cannot exist there
+# would block every run of it.
+_gate "absent pytest + nothing touched exits 0 (skip)" "0"
+
+# Python touched: the gate cannot verify the change, so it must block. This
+# assertion is what keeps the skip above from being a hole.
+: > "$_scratch/mod.py"
+_gate "absent pytest + Python touched blocks (2)" "2"
+rm -f "$_scratch/mod.py"
+
+# py_touched matched \.py$ only in its first version. tests/test_templates.py and
+# tests/test_shared_partials.py assert on templates/*.md, so a template edit read
+# as "nothing to verify" and skipped the very tests covering it. Found by the
+# compound-learning agent one cycle after the skip path shipped, and reproduced
+# before it was believed.
+mkdir -p "$_scratch/templates"; : > "$_scratch/templates/x.md"
+_gate "absent pytest + template touched blocks (2)" "2"
+rm -rf "$_scratch/templates"
+
+# pyproject moves the coverage floor and dependency pins, which decide whether a
+# green suite means anything.
+: > "$_scratch/pyproject.toml"
+_gate "absent pytest + pyproject touched blocks (2)" "2"
+rm -f "$_scratch/pyproject.toml"
 
 echo
 echo "inject-context — output shape and the 10k cap"

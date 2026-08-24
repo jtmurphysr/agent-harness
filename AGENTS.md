@@ -42,16 +42,36 @@ app.py                  ← CLI entrypoint only. Parses args, calls pipeline. No
 ```
 -->
 
+This repo's live map. It mirrors `ALLOWED_IMPORTS` in `scripts/validate_harness.py`
+exactly; the two are checked against each other and must be edited together.
+
 ```
-<entrypoint>.py              ← CLI/API entrypoint. Parses args, calls pipeline. No logic.
-├── <module_a>/
-│   └── ...
-├── <module_b>/
-│   └── ...
-├── pipeline.py              ← Orchestration only.
-├── models.py                ← Data schemas only. No logic, no internal imports.
-└── tests/
+cli/              ← Entrypoints: init, reconcile, render, review, sync.
+                    May import: github, interview, renderer, stonehaven
+stonehaven/       ← Orchestration: admin_api, listener, registry, worker.
+                    May import: github, notifications, reviewers, verdict_store
+github/           ← GitHub API I/O: issues, pr, webhook.   May import: reviewers
+reviewers/        ← Dispatch and verdict models.           May import: github
+renderer/         ← Template composition, lockfile, validators.  Imports nothing internal.
+interview/        ← Analysis.                                    Imports nothing internal.
+notifications/    ← Publishing.                                  Imports nothing internal.
+verdict_store/    ← Verdict persistence: client, models.         Imports nothing internal.
+templates/        ← 6 .md files, zero .py — not importable. Covered by
+                    tests/test_templates.py and tests/test_shared_partials.py.
+tests/
 ```
+
+**Known exception — `github` ↔ `reviewers` is a cycle.** `github/issues.py:20` imports
+`reviewers.verdicts.Finding`; `reviewers/dispatch.py:11` imports `github.pr.PRDiff`.
+Both are type-only, which usually means the two names belong in a shared module
+neither package owns. It is recorded in `KNOWN_CYCLES` so that any *new* cycle
+fails the linter; do not add to that set without a written reason.
+
+> Until 2026-08-24 the map above was the unfilled template placeholder and
+> `ALLOWED_IMPORTS` still held the example modules, so the linter walked **zero
+> files** and "Harness Structure" passed as a required check while verifying
+> nothing. If you are templating this repo, replacing both is step one, and the
+> linter now fails on `files_checked == 0` rather than letting it pass quietly.
 
 ### Invariants (enforced by structural linter — `scripts/validate_harness.py`)
 
