@@ -77,6 +77,7 @@ def __init__(self) -> None:
     # existing fields...
     self._music_user_token: str | None = os.environ.get("APPLE_MUSIC_USER_TOKEN")
 
+
 def get_music_user_token(self) -> str | None:
     """Return Music User Token from env, or None if not configured."""
     return self._music_user_token

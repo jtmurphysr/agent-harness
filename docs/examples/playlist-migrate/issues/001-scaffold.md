@@ -65,9 +65,10 @@ class SpotifyTrack(BaseModel):
     title: str
     artist: str
     album: str
-    isrc: str | None = None          # Not always present — see AGENTS.md Warning 2
+    isrc: str | None = None  # Not always present — see AGENTS.md Warning 2
     duration_ms: int
     playlist_position: int
+
 
 # SpotifyPlaylist — a playlist with its tracks
 class SpotifyPlaylist(BaseModel):
@@ -78,13 +79,15 @@ class SpotifyPlaylist(BaseModel):
     collaborative: bool
     tracks: list[SpotifyTrack] = []
 
+
 # MatchResult — result of attempting to resolve a Spotify track to Apple Music
 class MatchResult(BaseModel):
     spotify_track: SpotifyTrack
     apple_music_id: str | None = None
     match_strategy: Literal["isrc", "fuzzy", "unresolved"]
-    confidence: float                # 1.0 for ISRC, 0.0-1.0 for fuzzy, 0.0 for unresolved
+    confidence: float  # 1.0 for ISRC, 0.0-1.0 for fuzzy, 0.0 for unresolved
     matched: bool
+
 
 # UnresolvedTrack — written to unresolved.json
 class UnresolvedTrack(BaseModel):
@@ -92,9 +95,10 @@ class UnresolvedTrack(BaseModel):
     title: str
     artist: str
     isrc: str | None = None
-    reason: str                      # "no_isrc_match" | "fuzzy_below_threshold" | "api_error"
+    reason: str  # "no_isrc_match" | "fuzzy_below_threshold" | "api_error"
     playlist_name: str
     playlist_position: int
+
 
 # MigrationReport — written to migration_report.json
 class MigrationReport(BaseModel):
@@ -103,7 +107,7 @@ class MigrationReport(BaseModel):
     total_tracks: int
     matched_tracks: int
     unresolved_tracks: int
-    match_rate: float                # matched / total, 0.0-1.0
+    match_rate: float  # matched / total, 0.0-1.0
     isrc_matches: int
     fuzzy_matches: int
     duration_seconds: float
@@ -118,7 +122,9 @@ The stub should define the CLI interface and print "Not implemented" then exit.
 
 ```python
 import typer
+
 app = typer.Typer()
+
 
 @app.command()
 def main(
@@ -129,6 +135,7 @@ def main(
     """Migrate Spotify playlists to Apple Music."""
     typer.echo("Not implemented yet.")
     raise typer.Exit(0)
+
 
 if __name__ == "__main__":
     app()

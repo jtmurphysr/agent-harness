@@ -66,6 +66,7 @@ class ClassName:
         """One-line docstring."""
         ...
 
+
 async def function_name(arg: ArgType) -> ReturnType | None:
     """One-line docstring."""
     ...
