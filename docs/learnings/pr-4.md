@@ -108,6 +108,17 @@ correct on inspection and unproven in execution.
   event would have produced a valid workflow, a green CI run, and a silently missing
   tracking comment. Treat "input removed, now inferred" as the highest-risk kind of
   migration note: it is the one that passes every validator.
+- **⚠️ `python -m <missing module>` exits 1 — colliding with "tests failed."**
+  Found live on this run. `.claude/hooks/gate-done.sh:60` runs
+  `python3 -m pytest tests/`, and has a well-written branch for an unprovisioned
+  environment (`rc` in `2|3|4` → "could not run… `pip install -e \".[dev]\"`").
+  But when pytest is *absent entirely*, CPython's `-m` machinery prints
+  `No module named pytest` and exits **1**, which falls through to the `*)`
+  catch-all: *"Test suite is failing. You are not done."* Exit code 1 is
+  overloaded — it is also pytest's own "tests ran and failed." The two are
+  indistinguishable by `rc` and trivially distinguishable by output. Guard the
+  precondition instead: `"$PY" -c 'import pytest'` before line 60, dying with the
+  same provisioning message the `2|3|4` branch already writes.
 - **⚠️ Two independent defects can share one symptom.** A missing `ANTHROPIC_API_KEY`
   and the dead trigger gate both manifested as *green check, no output.* Fixing the
   key "moved the no-op three seconds later." When a silent failure is fixed, assume
@@ -167,6 +178,18 @@ as their mandatory first step, and what they currently read is scaffolding.
       closing line to say so), or change Step 4 of the prompt in
       `compound-learning.yml` to open a PR labelled `human-review` instead of pushing.
       Blocking every future run until resolved.
+- [ ] **Fix the Stop gate's pytest-missing path, and provision this job.** Two
+      separate defects, both hit on this run. (a) `gate-done.sh` misreports absent
+      pytest as a failing suite — add an `import pytest` precondition check.
+      (b) `compound-learning.yml` has no `setup-python` and no `pip install`
+      (unlike `ci.yml`, which has both in its `test` job), so pytest can *never*
+      exist here and the Stop gate blocks **every** compound-learning run at the
+      same line — on a job whose only output is a Markdown file. Either provision
+      the job or scope the gate to the files the turn actually touched.
+- [ ] **Untrack `tests/__pycache__/`.** `git ls-files tests/` returns 62 committed
+      `.pyc` files, including artifacts from two different pytest versions
+      (8.3.5 and 9.1.1). Add to `.gitignore` and `git rm -r --cached`. Textbook
+      `gc-agent` work.
 - [ ] **Exercise the four unproven v1 call sites.** File one issue with the
       `agent-task` label (proves `agent-dispatch` `issues` + `track_progress`),
       comment `/agent retry` on it (proves `issue_comment`), and manually dispatch
