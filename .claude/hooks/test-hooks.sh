@@ -77,6 +77,40 @@ echo '{"session_id":"t","stop_hook_active":false}' | HARNESS_PYTHON=/nonexistent
 is "missing interpreter blocks" "2" "$?"
 
 echo
+echo "gate-done — absent pytest is not a failing suite"
+# The bug: `python -m <missing module>` exits 1, and so does pytest's own
+# "tests ran and failed." Indistinguishable by rc, so an absent pytest fell
+# through to the *) branch and reported failing tests on a machine with none.
+# The 2|3|4 branch existed for exactly this and never saw it. Found live by the
+# compound-learning agent on PR #4 -- not by anyone reading the file.
+_stub=$(mktemp); trap 'rm -f "$_stub"' EXIT
+cat > "$_stub" <<'STUB'
+#!/usr/bin/env bash
+[ "$1" = "-c" ] && [ "$2" = "import pytest" ] && exit 1
+[ "$1" = "-m" ] && [ "$2" = "pytest" ] && { echo "No module named pytest" >&2; exit 1; }
+exec python3 "$@"
+STUB
+chmod +x "$_stub"
+
+_payload='{"session_id":"t","stop_hook_active":false}'
+_probe="tests/_gate_probe_$$.py"
+
+# No Python touched: nothing for pytest to verify, so its absence is not a gap.
+# Guards the doc-only turn -- compound-learning.yml has no setup-python and no
+# pip install, and gating a Markdown write behind a test runner that cannot
+# exist there blocks every run of it.
+echo "$_payload" | HARNESS_PYTHON="$_stub" bash .claude/hooks/gate-done.sh >/dev/null 2>&1
+is "absent pytest + no Python touched exits 0 (skip)" "0" "$?"
+
+# Python touched: the gate cannot verify the change, so it must block. This is
+# the assertion that keeps the skip above from becoming a hole.
+printf '# gate probe\n' > "$_probe"
+echo "$_payload" | HARNESS_PYTHON="$_stub" bash .claude/hooks/gate-done.sh >/dev/null 2>&1
+_rc=$?
+rm -f "$_probe"
+is "absent pytest + Python touched blocks (2)" "2" "$_rc"
+
+echo
 echo "inject-context — output shape and the 10k cap"
 out=$(echo '{"session_id":"t","source":"startup"}' | bash .claude/hooks/inject-context.sh 2>/dev/null)
 n=$(printf '%s' "$out" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"]))' 2>/dev/null || echo -1)
