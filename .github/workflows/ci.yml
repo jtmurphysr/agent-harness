@@ -110,7 +110,11 @@ jobs:
   auto-merge:
     name: Auto-merge
     runs-on: ubuntu-latest
-    needs: [check-project, harness-lint, lint, test]
+    needs: [check-project, harness-lint, hook-tests, lint, test]
+    # hook-tests sits alongside harness-lint, OUTSIDE the has_project branch:
+    # the hook guards do not depend on a project existing, and a guard that
+    # cannot block a merge is a report, not a gate. Without this clause an
+    # agent-authored PR that broke a fail-closed hook would auto-merge green.
     if: |
       always() &&
       github.event_name == 'pull_request' &&
@@ -121,6 +125,7 @@ jobs:
       ) &&
       !contains(github.event.pull_request.labels.*.name, 'human-review') &&
       needs.harness-lint.result == 'success' &&
+      needs.hook-tests.result == 'success' &&
       (
         needs.check-project.outputs.has_project == 'false' ||
         (
