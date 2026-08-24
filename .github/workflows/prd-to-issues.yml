@@ -40,13 +40,15 @@ jobs:
 
       - name: Read PRD and generate issues
         if: steps.guard.outputs.skip != 'true'
-        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_PAT }}
-          mode: agent
-          allowed_tools: "Bash(gh:*),Read,Write,Edit,LS,Glob,Grep,TodoWrite"
-          direct_prompt: |
+          # workflow_dispatch was already an automation event, so this call site
+          # worked under the beta. Migrated for consistency: `mode` is inferred
+          # in v1, `direct_prompt` is `prompt`, `allowed_tools` is a CLI flag.
+          claude_args: --allowedTools "Bash(gh:*),Read,Write,Edit,LS,Glob,Grep,TodoWrite"
+          prompt: |
             You are the Issues Agent for this repository's autonomous development harness.
 
             Your job is to read docs/PRD.md and produce a complete, sequenced set of

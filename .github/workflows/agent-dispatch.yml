@@ -107,19 +107,23 @@ jobs:
           gh issue comment "$ISSUE_NUM" \
             --repo ${{ github.repository }} \
             --body "Agent dispatched. Sequential dependency verified. Reading AGENTS.md and issue spec. Will open a PR when complete. Add human-review label at any time to block auto-merge. Comment /agent retry to re-dispatch if needed."
-      # mode: tag handles issues/comments (entity events) and respects label_trigger.
-      # mode: agent only handles workflow_dispatch/schedule (automation events).
-      # These two steps are mutually exclusive via if: conditions.
+      # v1 removed the `mode` input -- detectMode() infers it. That inference is
+      # not a no-op here: an issues event carrying a prompt resolves to agent
+      # mode (detector.ts:54), which would silently drop the tracking comment
+      # this step has always posted. track_progress: true forces tag mode back
+      # for issues/issue_comment/pull_request events, preserving behaviour.
+      #
+      # The two steps below remain mutually exclusive via their if: conditions.
       - name: Run Claude Code agent (label dispatch)
         if: github.event_name == 'issues'
-        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_PAT }}
-          mode: tag
+          track_progress: true
           label_trigger: "agent-task"
-          allowed_tools: "Bash,Edit,Write,Read,Glob,Grep,LS,TodoRead,TodoWrite"
-          direct_prompt: |
+          claude_args: --allowedTools "Bash,Edit,Write,Read,Glob,Grep,LS,TodoRead,TodoWrite"
+          prompt: |
             You are operating in an agent-first repository.
 
             MANDATORY FIRST STEPS — do these in order, before writing any code:
@@ -148,13 +152,15 @@ jobs:
             Never commit or push to main.
       - name: Run Claude Code agent (workflow dispatch)
         if: github.event_name == 'workflow_dispatch'
-        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_PAT }}
-          mode: agent
-          allowed_tools: "Bash,Edit,Write,Read,Glob,Grep,LS,TodoRead,TodoWrite"
-          direct_prompt: |
+          # No track_progress: workflow_dispatch is not an entity event, so
+          # detectMode() falls through to agent -- the behaviour this step
+          # already had. Setting it here would throw in validateTrackProgressEvent.
+          claude_args: --allowedTools "Bash,Edit,Write,Read,Glob,Grep,LS,TodoRead,TodoWrite"
+          prompt: |
             You are operating in an agent-first repository.
 
             MANDATORY FIRST STEPS — do these in order, before writing any code:
@@ -418,14 +424,16 @@ jobs:
               body: 'Agent retrying. Reading current state and diagnosing previous attempt.'
             });
       - name: Run Claude Code agent (retry)
-        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_PAT }}
-          mode: tag
+          # issue_comment is an entity event, so without this detectMode()
+          # would return agent (detector.ts:41) and drop the tracking comment.
+          track_progress: true
           trigger_phrase: "/agent retry"
-          allowed_tools: "Bash,Edit,Write,Read,Glob,Grep,LS,TodoRead,TodoWrite"
-          direct_prompt: |
+          claude_args: --allowedTools "Bash,Edit,Write,Read,Glob,Grep,LS,TodoRead,TodoWrite"
+          prompt: |
             You are retrying a previous agent task on issue #${{ github.event.issue.number }}.
 
             FIRST: Read AGENTS.md in full.

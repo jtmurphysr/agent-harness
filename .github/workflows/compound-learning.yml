@@ -23,14 +23,23 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      # v1.0.201, not the 2026-04-25 beta. The beta's agent mode gated on
+      # isAutomationContext(), whose allowlist is exactly ["workflow_dispatch",
+      # "schedule"] -- so this job, which fires on pull_request:closed, could
+      # never run. It logged "No trigger found, skipping remaining steps" and
+      # exited 0 on every merge from April 27 onward. v1 replaced that gate
+      # with `containsTrigger = !!inputs.prompt` for agent mode: the prompt is
+      # the trigger, and the event type no longer participates.
       - name: Extract learnings
-        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_PAT }}
-          mode: agent
-          allowed_tools: "Bash(gh:*),Bash(git:*),Bash(mkdir:*),Read,Write,Edit,LS,Glob,Grep,TodoWrite"
-          direct_prompt: |
+          # v1 renames: `mode` is inferred by detectMode() and no longer an
+          # input, `direct_prompt` became `prompt`, and `allowed_tools` moved
+          # into claude_args as a Claude CLI flag.
+          claude_args: --allowedTools "Bash(gh:*),Bash(git:*),Bash(mkdir:*),Read,Write,Edit,LS,Glob,Grep,TodoWrite"
+          prompt: |
             You are the Compound Learning Agent for this repository's autonomous development harness.
 
             Your job is to analyze a just-merged pull request and extract structured learnings
