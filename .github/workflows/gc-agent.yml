@@ -41,12 +41,14 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Run GC agent
-        uses: anthropics/claude-code-action@28f83620103c48a57093dcc2837eec89e036bb9f  # beta as of 2026-04-25
+        uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_PAT }}
-          mode: agent
-          direct_prompt: |
+          # schedule and workflow_dispatch were both automation events, so this
+          # call site worked under the beta. No allowed_tools here, so the only
+          # v1 changes are the dropped `mode` and direct_prompt -> prompt.
+          prompt: |
             You are the garbage collection agent for this repository.
             Read AGENTS.md first for project context and module boundaries.
             Your job is preventing entropy. Run the following checks and open

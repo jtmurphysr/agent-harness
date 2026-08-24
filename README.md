@@ -11,7 +11,7 @@ You write the intent. Agents decompose, implement, test, gate, merge, and learn.
 ```
 PRD ──► prd-to-issues ──► Sequential Issue Dispatch ──► Agent Implementation
                                                               │
-                                                        CI Gate (4-stage)
+                                                        CI Gate (5-stage)
                                                               │
                                                         Auto-Merge ──► Compound Learning
                                                                               │
@@ -48,7 +48,7 @@ agent-harness/
 │   └── examples/                      ← Reference implementations from validated projects
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                     ← 4-stage CI pipeline with auto-merge
+│   │   ├── ci.yml                     ← 5-stage CI pipeline with auto-merge
 │   │   ├── agent-dispatch.yml         ← Dispatches agent on `agent-task` label
 │   │   ├── prd-to-issues.yml          ← Decomposes PRD into sequenced issues
 │   │   ├── compound-learning.yml      ← Extracts learnings on every merge
@@ -150,7 +150,8 @@ Adapt the following before committing:
 For non-Python projects, `ci.yml` can be omitted or stubbed. Decide before dispatch whether you want a CI gate or pure auto-merge on any push.
 
 > **Key `agent-dispatch.yml` notes:**
-> - Requires `mode: agent` on the Claude Code action — without it, `workflow_dispatch` events fail
+> - Every Claude Code action step needs a `prompt`. Under v1 the prompt is what triggers agent mode; the removed `mode` input is now inferred from the event and the presence of a prompt
+> - The two entity-event steps set `track_progress: true` to stay in tag mode and keep posting tracking comments
 > - Sequential dependency gate: checks that the predecessor issue (N-1) is closed before running
 > - Uses `GH_PAT` (not `GITHUB_TOKEN`) for PR creation — the built-in token can't trigger downstream workflows
 
@@ -231,7 +232,8 @@ Expected PR branch: `claude/issue-<N>-<slug>`
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Tag mode cannot handle workflow_dispatch events` | Missing `mode: agent` on Claude Code action | Add `mode: agent` to `agent-dispatch.yml` |
+| `No trigger found, skipping remaining steps` | The action ran and did nothing — and the step still reported success | Confirm `prompt` is set on that step. In v1 the prompt *is* the trigger for agent mode; with no prompt the action skips every remaining step and exits 0 |
+| Tracking comment missing on an agent-dispatched issue | `track_progress` absent — v1 auto-detects agent mode whenever a `prompt` is present, and agent mode skips comment tracking | Add `track_progress: true`. Valid only for `pull_request`, `issues`, and `issue_comment` events; it throws on anything else |
 | `Halt — predecessor not closed` | Gate fired but prior issue still open | Close predecessor, re-apply `agent-task` label |
 | `Permission denied` on PR creation | `GITHUB_TOKEN` used instead of `GH_PAT` | Confirm `env: GH_TOKEN: ${{ secrets.GH_PAT }}` is set |
 | Workflows not in Actions tab | YAML syntax error | Validate with `gh workflow list`; check Actions tab for parse errors |
