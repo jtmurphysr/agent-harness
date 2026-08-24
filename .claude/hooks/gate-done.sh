@@ -13,7 +13,16 @@
 
 set -uo pipefail
 HOOK_NAME="gate-done"
-source "${CLAUDE_PROJECT_DIR:?CLAUDE_PROJECT_DIR unset}/.claude/hooks/lib/preamble.sh"
+
+# Bootstrap guard. die_closed lives in the preamble, which lives behind this
+# variable, so it does not exist yet -- and BOTH `set -u` on a bare $VAR and the
+# ${VAR:?msg} form exit 1, which is NON-BLOCKING. A fail-closed gate that exits 1
+# is a gate that silently is not there. Exit 2 by hand, before the source.
+if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+  echo "[$HOOK_NAME] BLOCKED — CLAUDE_PROJECT_DIR unset; cannot locate hook library" >&2
+  exit 2
+fi
+source "$CLAUDE_PROJECT_DIR/.claude/hooks/lib/preamble.sh"
 
 require jq
 

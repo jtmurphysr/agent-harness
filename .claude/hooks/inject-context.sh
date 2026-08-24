@@ -11,7 +11,16 @@
 
 set -uo pipefail
 HOOK_NAME="inject-context"
-source "${CLAUDE_PROJECT_DIR:?CLAUDE_PROJECT_DIR unset}/.claude/hooks/lib/preamble.sh"
+
+# Bootstrap guard. Exit 1 here is CORRECT for this hook -- it is fail-open by
+# design (see header) -- but make that a decision rather than an accident of
+# how `set -u` happens to behave. A fail-CLOSED hook needs exit 2 here instead;
+# see gate-done.sh.
+if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+  echo "[$HOOK_NAME] warning: CLAUDE_PROJECT_DIR unset; skipping context injection" >&2
+  exit 1
+fi
+source "$CLAUDE_PROJECT_DIR/.claude/hooks/lib/preamble.sh"
 
 command -v jq >/dev/null 2>&1 || warn_open "jq not on PATH; skipping context injection"
 
