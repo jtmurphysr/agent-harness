@@ -42,6 +42,23 @@ jobs:
       - name: Validate module boundaries
         run: python scripts/validate_harness.py
 
+  hook-tests:
+    name: Hook Guards
+    runs-on: ubuntu-latest
+    needs: check-project
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+      # These hooks fail open when they break -- no exception, no non-zero exit,
+      # just a guard quietly allowing what it was written to block. Seven such
+      # bugs shipped before this job existed. Reading them did not catch any.
+      - name: Test hook guards
+        run: .claude/hooks/test-hooks.sh
+
   lint:
     name: Lint & Types
     runs-on: ubuntu-latest
