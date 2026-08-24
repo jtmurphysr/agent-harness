@@ -219,3 +219,11 @@ jobs:
         with:
           name: claude-execution-log
           path: /home/runner/work/_temp/claude-execution-output.json
+          # Same silent-failure shape that hid compound-learning's four-month
+          # no-op: the default `warn` uploads nothing and still exits 0. If the
+          # action ran it wrote this file, so a missing file means it did not.
+          #
+          # No outcome-verify step here, unlike compound-learning: this job has
+          # a legitimate no-op path ("Guard -- skip if agent-task issues already
+          # exist"), so "zero issues created" is not by itself a failure.
+          if-no-files-found: error

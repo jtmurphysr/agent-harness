@@ -106,6 +106,14 @@ jobs:
         with:
           name: coverage-report
           path: .coverage
+          # Deliberately `warn`, not `error`, and stated rather than defaulted.
+          # This step is `if: always()`, so when pytest dies before writing
+          # .coverage the file is legitimately absent and a hard failure here
+          # would bury the real error under a second, misleading one. Nothing
+          # in the repo consumes this artifact -- it is diagnostic, not a gate.
+          # The two claude-code-action logs are the opposite case and are set
+          # to `error`. The point is that the choice is made, not inherited.
+          if-no-files-found: warn
 
   auto-merge:
     name: Auto-merge
