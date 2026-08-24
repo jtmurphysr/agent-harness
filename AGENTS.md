@@ -221,6 +221,7 @@ All secrets via env vars. Fail loud and early if any are missing:
 ```python
 import os
 
+
 def _require_env(key: str) -> str:
     value = os.environ.get(key)
     if not value:
