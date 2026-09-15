@@ -46,8 +46,17 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_PAT }}
           # schedule and workflow_dispatch were both automation events, so this
-          # call site worked under the beta. No allowed_tools here, so the only
-          # v1 changes are the dropped `mode` and direct_prompt -> prompt.
+          # call site worked under the beta. The v1 changes were the dropped
+          # `mode` and direct_prompt -> prompt.
+          #
+          # The absence of allowed_tools was NOT "nothing to migrate" — it is the
+          # migration's one real gap. v1 does not read .claude/settings.json's
+          # permissions.allow; tools must be granted here or the agent falls back
+          # to the SDK's read-only default set. Without this line the run still
+          # reports success: it burns ~55 turns, spends real money, files nothing,
+          # and the only evidence is permission_denials_count buried in the result
+          # JSON. Every other agent workflow in this repo already passes it.
+          claude_args: --allowedTools "Bash,Edit,Write,Read,Glob,Grep,LS,TodoRead,TodoWrite"
           prompt: |
             You are the garbage collection agent for this repository.
             Read AGENTS.md first for project context and module boundaries.
