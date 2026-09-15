@@ -117,8 +117,12 @@ label exists to support. One word closes it.
 ### Pass 1b detects two-node cycles only
 
 ```python
-cycles = {frozenset({a, b}) for a, deps in ALLOWED_IMPORTS.items()
-          for b in deps if a in ALLOWED_IMPORTS.get(b, set())}
+cycles = {
+    frozenset({a, b})
+    for a, deps in ALLOWED_IMPORTS.items()
+    for b in deps
+    if a in ALLOWED_IMPORTS.get(b, set())
+}
 ```
 
 Strictly pairwise. A declared three-node cycle — `cli → stonehaven`,
