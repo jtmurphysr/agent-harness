@@ -1,8 +1,7 @@
 """Tests for stonehaven/worker.py review pipeline orchestration."""
 
 from datetime import datetime
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, mock_open, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -373,7 +372,7 @@ invariants: []
 ---
 """
         mock_pr_client.get_file_content.side_effect = [context_yaml, "# Agent content"]
-        
+
         # Use only one reviewer for this test
         single_review_result = [
             ReviewResult(
@@ -443,7 +442,7 @@ invariants: []
 ---
 """
         mock_pr_client.get_file_content.side_effect = [context_yaml, "# Agent content"]
-        
+
         # Use only one reviewer for this test
         single_review_result = [
             ReviewResult(
@@ -571,9 +570,7 @@ invariants: []
         assert project_context["project"]["name"] == "Test Project"
         assert len(project_context["reviewers"]) == 3
 
-    async def test_load_project_artifacts_malformed_yaml(
-        self, review_worker: ReviewWorker
-    ) -> None:
+    async def test_load_project_artifacts_malformed_yaml(self, review_worker: ReviewWorker) -> None:
         """Test handling of malformed project context YAML."""
         # Missing YAML frontmatter
         malformed_content = "# Just markdown, no YAML frontmatter"

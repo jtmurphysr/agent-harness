@@ -5,13 +5,14 @@ Tests the complete greenfield flow from project_context.md through
 agent scaffolding, webhook registration, and Stonehaven registration.
 """
 
-import pytest
 import tempfile
 import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from cli.init import init_greenfield, InitError
+import pytest
+
+from cli.init import InitError, init_greenfield
 
 
 @pytest.fixture
@@ -122,10 +123,10 @@ def test_greenfield_e2e_complete_flow(
     mock_subprocess,
 ):
     """End-to-end test of complete greenfield initialization.
-    
+
     This is the primary GATE test - verifies full flow end-to-end:
     - Agents scaffolded in .factory/agents/
-    - Webhook registered with GitHub  
+    - Webhook registered with GitHub
     - Project registered with Stonehaven
     - All manifests created (.factory/harness.toml, webhook_config.yml, templates_lock.yml)
     """
@@ -137,27 +138,28 @@ def test_greenfield_e2e_complete_flow(
     context_path.write_text(valid_project_context)
 
     # Mock all external dependencies
-    with patch("cli.init.render_agents") as mock_render, \
-         patch("cli.init.register_webhook_sync", return_value=98765) as mock_webhook, \
-         patch("cli.init.httpx.Client") as mock_client_class:
-        
+    with (
+        patch("cli.init.render_agents") as mock_render,
+        patch("cli.init.register_webhook_sync", return_value=98765) as mock_webhook,
+        patch("cli.init.httpx.Client") as mock_client_class,
+    ):
         # Setup HTTP client mock for Stonehaven registration
         mock_client = MagicMock()
         mock_client_class.return_value.__enter__.return_value = mock_client
         mock_client.post.return_value.status_code = 200
-        
+
         # Execute complete greenfield flow
         init_greenfield(
             project_root=temp_project_root,
             templates_dir=mock_templates_dir,
             stonehaven_url=stonehaven_url,
-            github_token=github_token
+            github_token=github_token,
         )
 
         # GATE REQUIREMENT: Verify agents scaffolded in .factory/agents/
         agents_dir = factory_dir / "agents"
         assert agents_dir.exists(), ".factory/agents/ directory must be created"
-        
+
         # GATE REQUIREMENT: Verify webhook registered with GitHub
         mock_webhook.assert_called_once()
         webhook_call_args = mock_webhook.call_args
@@ -166,7 +168,7 @@ def test_greenfield_e2e_complete_flow(
         assert "stonehaven.test.local/webhooks/" in webhook_call_args.kwargs["webhook_url"]
         assert len(webhook_call_args.kwargs["secret"]) == 64  # 32 bytes hex
         assert webhook_call_args.kwargs["github_token"] == github_token
-        
+
         # GATE REQUIREMENT: Verify project registered with Stonehaven
         mock_client.post.assert_called_once()
         stonehaven_call_args = mock_client.post.call_args
@@ -175,22 +177,22 @@ def test_greenfield_e2e_complete_flow(
         assert "stonehaven_id" in request_data
         assert request_data["repo"] == "testowner/test-e2e-project"
         assert request_data["project_name"] == "test-e2e-project"
-        
+
         # GATE REQUIREMENT: Verify all manifests created
         # 1. .factory/harness.toml
         harness_toml = factory_dir / "harness.toml"
         assert harness_toml.exists(), "harness.toml manifest must be created"
         harness_content = harness_toml.read_text()
-        assert 'stonehaven_id = ' in harness_content
+        assert "stonehaven_id = " in harness_content
         assert 'project_name = "test-e2e-project"' in harness_content
         assert 'repo = "testowner/test-e2e-project"' in harness_content
-        assert 'webhook_id = 98765' in harness_content
+        assert "webhook_id = 98765" in harness_content
         assert 'harness_version = "0.1.0"' in harness_content
-        
+
         # 2. .factory/webhook_config.yml
         webhook_config = factory_dir / "webhook_config.yml"
         assert webhook_config.exists(), "webhook_config.yml must be created"
-        
+
         # 3. Verify render_agents was called (this creates templates_lock.yml)
         mock_render.assert_called_once()
         render_call_args = mock_render.call_args
@@ -216,27 +218,28 @@ def test_greenfield_e2e_agents_scaffolded(
     context_path = factory_dir / "project_context.md"
     context_path.write_text(valid_project_context)
 
-    with patch("cli.init.render_agents") as mock_render, \
-         patch("cli.init.register_webhook_sync", return_value=11111), \
-         patch("cli.init.httpx.Client") as mock_client_class:
-        
+    with (
+        patch("cli.init.render_agents") as mock_render,
+        patch("cli.init.register_webhook_sync", return_value=11111),
+        patch("cli.init.httpx.Client") as mock_client_class,
+    ):
         # Setup HTTP client mock
         mock_client = MagicMock()
         mock_client_class.return_value.__enter__.return_value = mock_client
         mock_client.post.return_value.status_code = 200
-        
+
         init_greenfield(
             project_root=temp_project_root,
             templates_dir=mock_templates_dir,
             stonehaven_url=stonehaven_url,
-            github_token=github_token
+            github_token=github_token,
         )
 
         # Verify agents directory structure was created
         agents_dir = factory_dir / "agents"
         assert agents_dir.exists()
         assert agents_dir.is_dir()
-        
+
         # Verify render_agents was called with correct parameters
         mock_render.assert_called_once()
         call_args = mock_render.call_args
@@ -263,45 +266,46 @@ def test_greenfield_e2e_webhook_registered(
     context_path.write_text(valid_project_context)
 
     expected_webhook_id = 55555
-    
-    with patch("cli.init.render_agents"), \
-         patch("cli.init.register_webhook_sync", return_value=expected_webhook_id) as mock_webhook, \
-         patch("cli.init.httpx.Client") as mock_client_class:
-        
+
+    with (
+        patch("cli.init.render_agents"),
+        patch("cli.init.register_webhook_sync", return_value=expected_webhook_id) as mock_webhook,
+        patch("cli.init.httpx.Client") as mock_client_class,
+    ):
         # Setup HTTP client mock
         mock_client = MagicMock()
         mock_client_class.return_value.__enter__.return_value = mock_client
         mock_client.post.return_value.status_code = 200
-        
+
         init_greenfield(
             project_root=temp_project_root,
             templates_dir=mock_templates_dir,
             stonehaven_url=stonehaven_url,
-            github_token=github_token
+            github_token=github_token,
         )
 
         # Verify webhook registration was called
         mock_webhook.assert_called_once()
         call_args = mock_webhook.call_args
-        
+
         # Check webhook registration parameters
         assert call_args.kwargs["repo_owner"] == "testowner"
-        assert call_args.kwargs["repo_name"] == "test-e2e-project" 
+        assert call_args.kwargs["repo_name"] == "test-e2e-project"
         assert call_args.kwargs["webhook_url"].startswith(f"{stonehaven_url}/webhooks/")
         assert len(call_args.kwargs["secret"]) == 64  # 32 bytes hex = 64 chars
         assert call_args.kwargs["github_token"] == github_token
-        
+
         # Verify webhook URL contains a valid UUID
         webhook_url = call_args.kwargs["webhook_url"]
         stonehaven_id = webhook_url.split("/webhooks/")[-1]
         # Should not raise if valid UUID
         uuid.UUID(stonehaven_id, version=4)
-        
+
         # Verify webhook ID is recorded in harness.toml
         harness_toml = factory_dir / "harness.toml"
         assert harness_toml.exists()
         content = harness_toml.read_text()
-        assert f'webhook_id = {expected_webhook_id}' in content
+        assert f"webhook_id = {expected_webhook_id}" in content
 
 
 def test_greenfield_e2e_manifests_created(
@@ -313,50 +317,52 @@ def test_greenfield_e2e_manifests_created(
     mock_subprocess,
 ):
     """Test all manifest files are created correctly."""
-    # Setup project structure  
+    # Setup project structure
     temp_project_root.mkdir(parents=True)
     factory_dir = temp_project_root / ".factory"
     factory_dir.mkdir()
     context_path = factory_dir / "project_context.md"
     context_path.write_text(valid_project_context)
 
-    with patch("cli.init.render_agents"), \
-         patch("cli.init.register_webhook_sync", return_value=77777), \
-         patch("cli.init.httpx.Client") as mock_client_class:
-        
+    with (
+        patch("cli.init.render_agents"),
+        patch("cli.init.register_webhook_sync", return_value=77777),
+        patch("cli.init.httpx.Client") as mock_client_class,
+    ):
         # Setup HTTP client mock
         mock_client = MagicMock()
         mock_client_class.return_value.__enter__.return_value = mock_client
         mock_client.post.return_value.status_code = 200
-        
+
         init_greenfield(
             project_root=temp_project_root,
             templates_dir=mock_templates_dir,
             stonehaven_url=stonehaven_url,
-            github_token=github_token
+            github_token=github_token,
         )
 
         # Verify harness.toml manifest
         harness_toml = factory_dir / "harness.toml"
         assert harness_toml.exists()
         harness_content = harness_toml.read_text()
-        
+
         # Check all required fields in harness.toml
-        assert 'stonehaven_id = ' in harness_content
+        assert "stonehaven_id = " in harness_content
         assert 'project_name = "test-e2e-project"' in harness_content
         assert 'repo = "testowner/test-e2e-project"' in harness_content
-        assert 'webhook_id = 77777' in harness_content
+        assert "webhook_id = 77777" in harness_content
         assert 'harness_version = "0.1.0"' in harness_content
-        assert 'registered_at = ' in harness_content
-        
+        assert "registered_at = " in harness_content
+
         # Verify webhook_config.yml manifest
         webhook_config = factory_dir / "webhook_config.yml"
         assert webhook_config.exists()
-        
+
         import yaml
+
         with webhook_config.open() as f:
             config = yaml.safe_load(f)
-        
+
         # Check all required fields in webhook_config.yml
         assert "stonehaven_id" in config
         assert "secret" in config
@@ -364,11 +370,11 @@ def test_greenfield_e2e_manifests_created(
         assert "created_at" in config
         assert len(config["secret"]) == 64  # 32 bytes hex = 64 chars
         assert config["url"].startswith(f"{stonehaven_url}/webhooks/")
-        
+
         # Verify stonehaven_id is consistent between files
         stonehaven_id_from_webhook = config["stonehaven_id"]
         assert f'stonehaven_id = "{stonehaven_id_from_webhook}"' in harness_content
-        
+
         # Verify webhook URL contains the same stonehaven_id
         webhook_url = config["url"]
         assert webhook_url.endswith(f"/webhooks/{stonehaven_id_from_webhook}")
@@ -389,7 +395,7 @@ def test_greenfield_e2e_failure_missing_context(
             project_root=temp_project_root,
             templates_dir=mock_templates_dir,
             stonehaven_url=stonehaven_url,
-            github_token=github_token
+            github_token=github_token,
         )
 
     assert "project_context.md not found" in str(exc_info.value)
@@ -398,7 +404,7 @@ def test_greenfield_e2e_failure_missing_context(
 
 def test_greenfield_e2e_failure_invalid_context(
     temp_project_root,
-    mock_templates_dir, 
+    mock_templates_dir,
     stonehaven_url,
     github_token,
 ):
@@ -407,7 +413,7 @@ def test_greenfield_e2e_failure_invalid_context(
     factory_dir = temp_project_root / ".factory"
     factory_dir.mkdir()
     context_path = factory_dir / "project_context.md"
-    
+
     # Write invalid YAML content
     context_path.write_text("invalid: yaml: content: [")
 
@@ -416,7 +422,7 @@ def test_greenfield_e2e_failure_invalid_context(
             project_root=temp_project_root,
             templates_dir=mock_templates_dir,
             stonehaven_url=stonehaven_url,
-            github_token=github_token
+            github_token=github_token,
         )
 
     assert "Invalid project_context.md" in str(exc_info.value)
@@ -442,7 +448,7 @@ def test_greenfield_e2e_failure_render_error(
                 project_root=temp_project_root,
                 templates_dir=mock_templates_dir,
                 stonehaven_url=stonehaven_url,
-                github_token=github_token
+                github_token=github_token,
             )
 
         assert "Failed to render agent files" in str(exc_info.value)
@@ -464,21 +470,22 @@ def test_greenfield_e2e_failure_webhook_error(
     context_path = factory_dir / "project_context.md"
     context_path.write_text(valid_project_context)
 
-    with patch("cli.init.render_agents"), \
-         patch("cli.init.register_webhook_sync", side_effect=Exception("GitHub API error")), \
-         patch("cli.init.httpx.Client") as mock_client_class:
-        
-        # Setup HTTP client mock  
+    with (
+        patch("cli.init.render_agents"),
+        patch("cli.init.register_webhook_sync", side_effect=Exception("GitHub API error")),
+        patch("cli.init.httpx.Client") as mock_client_class,
+    ):
+        # Setup HTTP client mock
         mock_client = MagicMock()
         mock_client_class.return_value.__enter__.return_value = mock_client
         mock_client.post.return_value.status_code = 200
-        
+
         with pytest.raises(InitError) as exc_info:
             init_greenfield(
                 project_root=temp_project_root,
                 templates_dir=mock_templates_dir,
                 stonehaven_url=stonehaven_url,
-                github_token=github_token
+                github_token=github_token,
             )
 
         assert "Failed to register GitHub webhook" in str(exc_info.value)
@@ -500,21 +507,19 @@ def test_greenfield_e2e_failure_stonehaven_error(
     context_path = factory_dir / "project_context.md"
     context_path.write_text(valid_project_context)
 
-    with patch("cli.init.render_agents"), \
-         patch("cli.init.httpx.Client") as mock_client_class:
-        
+    with patch("cli.init.render_agents"), patch("cli.init.httpx.Client") as mock_client_class:
         # Setup HTTP client mock to fail
         mock_client = MagicMock()
         mock_client_class.return_value.__enter__.return_value = mock_client
         mock_client.post.return_value.status_code = 500
         mock_client.post.return_value.reason_phrase = "Internal Server Error"
-        
+
         with pytest.raises(InitError) as exc_info:
             init_greenfield(
                 project_root=temp_project_root,
                 templates_dir=mock_templates_dir,
                 stonehaven_url=stonehaven_url,
-                github_token=github_token
+                github_token=github_token,
             )
 
         assert "Failed to register with Stonehaven" in str(exc_info.value)
@@ -535,10 +540,11 @@ def test_greenfield_e2e_idempotent_execution(
     context_path = factory_dir / "project_context.md"
     context_path.write_text(valid_project_context)
 
-    with patch("cli.init.render_agents"), \
-         patch("cli.init.register_webhook_sync", return_value=33333), \
-         patch("cli.init.httpx.Client") as mock_client_class:
-        
+    with (
+        patch("cli.init.render_agents"),
+        patch("cli.init.register_webhook_sync", return_value=33333),
+        patch("cli.init.httpx.Client") as mock_client_class,
+    ):
         # Setup HTTP client mock - first call succeeds, second returns 409 (conflict)
         mock_client = MagicMock()
         mock_client_class.return_value.__enter__.return_value = mock_client
@@ -546,36 +552,36 @@ def test_greenfield_e2e_idempotent_execution(
             MagicMock(status_code=200),  # First registration succeeds
             MagicMock(status_code=409),  # Second registration returns conflict (already registered)
         ]
-        
+
         # Run initialization twice
         init_greenfield(
             project_root=temp_project_root,
             templates_dir=mock_templates_dir,
             stonehaven_url=stonehaven_url,
-            github_token=github_token
+            github_token=github_token,
         )
-        
+
         # Capture stonehaven_id from first run
         harness_toml = factory_dir / "harness.toml"
         first_content = harness_toml.read_text()
         first_stonehaven_id = None
-        for line in first_content.split('\n'):
-            if line.strip().startswith('stonehaven_id = '):
-                first_stonehaven_id = line.split('=', 1)[1].strip().strip('"\'')
+        for line in first_content.split("\n"):
+            if line.strip().startswith("stonehaven_id = "):
+                first_stonehaven_id = line.split("=", 1)[1].strip().strip("\"'")
                 break
-        
+
         # Run second time - should be idempotent
         init_greenfield(
             project_root=temp_project_root,
             templates_dir=mock_templates_dir,
             stonehaven_url=stonehaven_url,
-            github_token=github_token
+            github_token=github_token,
         )
-        
+
         # Verify same stonehaven_id is reused
         second_content = harness_toml.read_text()
         assert first_stonehaven_id is not None
         assert f'stonehaven_id = "{first_stonehaven_id}"' in second_content
-        
+
         # Verify both Stonehaven registration calls were made
         assert mock_client.post.call_count == 2

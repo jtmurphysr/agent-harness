@@ -12,7 +12,6 @@ HMAC verification, deduplication, worker processing, and Verdict Store persisten
 import hashlib
 import hmac
 import json
-import sqlite3
 import tempfile
 import uuid
 from datetime import datetime
@@ -55,9 +54,7 @@ class TestWebhookE2E:
         """Create test project record in database."""
         stonehaven_id = str(uuid.uuid4())
         project_id = verdict_store_client.create_project(
-            stonehaven_id=stonehaven_id,
-            repo="test-org/test-repo",
-            project_name="Test Project"
+            stonehaven_id=stonehaven_id, repo="test-org/test-repo", project_name="Test Project"
         )
         return ProjectRecord(
             id=project_id,
@@ -66,7 +63,7 @@ class TestWebhookE2E:
             project_name="Test Project",
             registered_at=datetime.now(),
             harness_version="1.0.0",
-            active=True
+            active=True,
         )
 
     @pytest.fixture
@@ -79,15 +76,8 @@ class TestWebhookE2E:
         """Sample GitHub webhook payload for pull request."""
         return {
             "action": "opened",
-            "repository": {
-                "full_name": "test-org/test-repo"
-            },
-            "pull_request": {
-                "number": 42,
-                "head": {
-                    "sha": "abc123def456789"
-                }
-            }
+            "repository": {"full_name": "test-org/test-repo"},
+            "pull_request": {"number": 42, "head": {"sha": "abc123def456789"}},
         }
 
     @pytest.fixture
@@ -99,9 +89,9 @@ class TestWebhookE2E:
             pr_sha="abc123def456789",
             pr_size_lines=150,
             diff_content="diff --git a/test.py b/test.py\n+added line",
-            changed_files=["test.py"]
+            changed_files=["test.py"],
         )
-        
+
         # Mock project context file content
         context_yaml = """---
 project:
@@ -137,14 +127,14 @@ invariants:
                 reviewer="engineer",
                 raw_response="## Good\nCode looks good\n## Bad\nMinor issues\n## Ugly\nNone\n## Closing Question\nAll good?",
                 template_version="1.0.0",
-                duration_ms=2000
+                duration_ms=2000,
             ),
             ReviewResult(
                 reviewer="architect",
                 raw_response="## Good\nStructure is fine\n## Bad\nNone\n## Ugly\nSecurity issue (invariant: test_invariant)\n## Closing Question\nConsidered alternatives?",
                 template_version="1.0.0",
-                duration_ms=2500
-            )
+                duration_ms=2500,
+            ),
         ]
         return dispatcher
 
@@ -153,7 +143,7 @@ invariants:
         """Mock verdict parser."""
         parser = MagicMock(spec=VerdictParser)
         parser.project_invariants = {"test_invariant"}
-        
+
         engineer_verdict = ParsedVerdict(
             reviewer="engineer",
             severity="WARN",
@@ -163,7 +153,7 @@ invariants:
             closing_question="All good?",
             findings=[
                 Finding(bucket="bad", text="Minor issues", severity="WARN", invariant_id=None)
-            ]
+            ],
         )
         architect_verdict = ParsedVerdict(
             reviewer="architect",
@@ -177,9 +167,9 @@ invariants:
                     bucket="ugly",
                     text="Security issue (invariant: test_invariant)",
                     severity="BLOCK",
-                    invariant_id="test_invariant"
+                    invariant_id="test_invariant",
                 )
-            ]
+            ],
         )
         parser.parse_verdict.side_effect = [engineer_verdict, architect_verdict]
         return parser
@@ -205,7 +195,7 @@ invariants:
         mock_verdict_parser: VerdictParser,
         verdict_store_client: VerdictStoreClient,
         mock_issue_creator: IssueCreator,
-        mock_notification_publisher: NotificationPublisher
+        mock_notification_publisher: NotificationPublisher,
     ) -> ReviewWorker:
         """Create review worker with mocked dependencies."""
         return ReviewWorker(
@@ -214,7 +204,7 @@ invariants:
             verdict_parser=mock_verdict_parser,
             verdict_store=verdict_store_client,
             issue_creator=mock_issue_creator,
-            notification_publisher=mock_notification_publisher
+            notification_publisher=mock_notification_publisher,
         )
 
     @pytest.fixture
@@ -248,10 +238,10 @@ invariants:
         verdict_store_client: VerdictStoreClient,
         project_record: ProjectRecord,
         webhook_secret: str,
-        sample_webhook_payload: dict
+        sample_webhook_payload: dict,
     ) -> None:
         """End-to-end test from webhook receipt to Verdict Store persistence.
-        
+
         This is the primary GATE test verifying the complete flow:
         1. Webhook receives GitHub event with HMAC verification
         2. Worker processes review pipeline
@@ -261,10 +251,10 @@ invariants:
         """
         # Override webhook handler's secret for this test
         original_verify = webhook_handler._verify_signature
-        
+
         def mock_verify_signature(payload: bytes, signature: str, secret: str) -> bool:
             return signature == self.create_valid_signature(payload, webhook_secret)
-        
+
         webhook_handler._verify_signature = mock_verify_signature
 
         # Prepare webhook payload
@@ -274,18 +264,16 @@ invariants:
         delivery_id = "test-delivery-e2e-123"
 
         # Mock the worker processing
-        with patch("tempfile.mkdtemp", return_value="/tmp"), \
-             patch("pathlib.Path.write_text"):
-            
+        with patch("tempfile.mkdtemp", return_value="/tmp"), patch("pathlib.Path.write_text"):
             # Step 1: Webhook receives event and returns 200 immediately
             response = test_client.post(
                 "/webhook",
                 headers={
                     "X-Hub-Signature-256": signature,
                     "X-GitHub-Delivery": delivery_id,
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
                 },
-                content=payload_bytes
+                content=payload_bytes,
             )
 
             # Verify webhook accepted immediately (< 500ms requirement)
@@ -295,9 +283,7 @@ invariants:
 
             # Step 2: Simulate worker processing (normally async background)
             await review_worker.process_review(
-                delivery_id=delivery_id,
-                repo="test-org/test-repo",
-                pr_number=42
+                delivery_id=delivery_id, repo="test-org/test-repo", pr_number=42
             )
 
         # Step 3: Verify verdicts written to Verdict Store
@@ -343,7 +329,7 @@ invariants:
         test_client: TestClient,
         webhook_handler: WebhookHandler,
         webhook_secret: str,
-        sample_webhook_payload: dict
+        sample_webhook_payload: dict,
     ) -> None:
         """Test webhook HMAC signature verification with valid and invalid signatures."""
         payload_json = json.dumps(sample_webhook_payload)
@@ -352,19 +338,21 @@ invariants:
 
         # Test 1: Valid signature should succeed
         valid_signature = self.create_valid_signature(payload_bytes, webhook_secret)
-        
+
         # Mock the verification to use our test secret
         original_verify = webhook_handler._verify_signature
-        webhook_handler._verify_signature = lambda p, s, secret: s == valid_signature
+        webhook_handler._verify_signature = lambda payload, signature, secret: (
+            signature == valid_signature
+        )
 
         response = test_client.post(
             "/webhook",
             headers={
                 "X-Hub-Signature-256": valid_signature,
                 "X-GitHub-Delivery": delivery_id,
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             },
-            content=payload_bytes
+            content=payload_bytes,
         )
 
         assert response.status_code == 200
@@ -372,15 +360,15 @@ invariants:
 
         # Test 2: Invalid signature should fail with 401
         invalid_signature = "sha256=invalid_signature_hash"
-        
+
         response = test_client.post(
             "/webhook",
             headers={
                 "X-Hub-Signature-256": invalid_signature,
                 "X-GitHub-Delivery": "test-invalid-signature",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             },
-            content=payload_bytes
+            content=payload_bytes,
         )
 
         assert response.status_code == 401
@@ -391,9 +379,9 @@ invariants:
             "/webhook",
             headers={
                 "X-GitHub-Delivery": "test-missing-signature",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             },
-            content=payload_bytes
+            content=payload_bytes,
         )
 
         assert response.status_code == 400
@@ -407,7 +395,7 @@ invariants:
         test_client: TestClient,
         webhook_handler: WebhookHandler,
         webhook_secret: str,
-        sample_webhook_payload: dict
+        sample_webhook_payload: dict,
     ) -> None:
         """Test webhook deduplication by delivery ID prevents duplicate processing."""
         payload_json = json.dumps(sample_webhook_payload)
@@ -424,9 +412,9 @@ invariants:
             headers={
                 "X-Hub-Signature-256": signature,
                 "X-GitHub-Delivery": delivery_id,
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             },
-            content=payload_bytes
+            content=payload_bytes,
         )
 
         assert response1.status_code == 200
@@ -439,9 +427,9 @@ invariants:
             headers={
                 "X-Hub-Signature-256": signature,
                 "X-GitHub-Delivery": delivery_id,  # Same delivery ID
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             },
-            content=payload_bytes
+            content=payload_bytes,
         )
 
         assert response2.status_code == 409
@@ -453,9 +441,9 @@ invariants:
             headers={
                 "X-Hub-Signature-256": signature,
                 "X-GitHub-Delivery": "test-deduplication-456",  # Different delivery ID
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             },
-            content=payload_bytes
+            content=payload_bytes,
         )
 
         assert response3.status_code == 200
@@ -466,10 +454,10 @@ invariants:
         review_worker: ReviewWorker,
         verdict_store_client: VerdictStoreClient,
         project_record: ProjectRecord,
-        mock_issue_creator: IssueCreator
+        mock_issue_creator: IssueCreator,
     ) -> None:
         """Test that Verdict Store write occurs before issue creation (durability requirement).
-        
+
         ⚠️ WARNING: Verdict Store write durability — Write verdicts before attempting issue creation
         """
         # Make issue creation fail to verify verdicts are still persisted
@@ -477,19 +465,15 @@ invariants:
 
         delivery_id = "test-durability-789"
 
-        with patch("tempfile.mkdtemp", return_value="/tmp"), \
-             patch("pathlib.Path.write_text"):
-            
+        with patch("tempfile.mkdtemp", return_value="/tmp"), patch("pathlib.Path.write_text"):
             # Process review - should not fail even though issue creation fails
             await review_worker.process_review(
-                delivery_id=delivery_id,
-                repo="test-org/test-repo",
-                pr_number=42
+                delivery_id=delivery_id, repo="test-org/test-repo", pr_number=42
             )
 
         # Verify verdicts were written despite issue creation failure
         verdicts = verdict_store_client.get_verdicts_for_project(project_record.id)
-        
+
         # Should have verdicts from both this test and previous tests
         durability_verdicts = [v for v in verdicts if v.delivery_id == delivery_id]
         assert len(durability_verdicts) == 2  # engineer + architect
@@ -510,13 +494,10 @@ invariants:
         mock_issue_creator.create_finding_issues.assert_called_once()
 
     async def test_webhook_response_time_constraint(
-        self,
-        test_client: TestClient,
-        webhook_handler: WebhookHandler,
-        sample_webhook_payload: dict
+        self, test_client: TestClient, webhook_handler: WebhookHandler, sample_webhook_payload: dict
     ) -> None:
         """Test webhook endpoint responds within 500ms requirement (GitHub timeout constraint).
-        
+
         ⚠️ WARNING: Webhook timeout vs review duration — GitHub timeout is 10 seconds, return 200 immediately
         """
         import time
@@ -534,9 +515,9 @@ invariants:
             headers={
                 "X-Hub-Signature-256": "sha256=test",
                 "X-GitHub-Delivery": "test-timing-123",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             },
-            content=payload_bytes
+            content=payload_bytes,
         )
 
         response_time = (time.time() - start_time) * 1000  # Convert to milliseconds
@@ -546,10 +527,7 @@ invariants:
         assert response.status_code == 200
 
     async def test_webhook_processing_error_returns_200(
-        self,
-        test_client: TestClient,
-        webhook_handler: WebhookHandler,
-        sample_webhook_payload: dict
+        self, test_client: TestClient, webhook_handler: WebhookHandler, sample_webhook_payload: dict
     ) -> None:
         """Test webhook returns 200 even for processing errors to avoid GitHub retries."""
         payload_json = json.dumps(sample_webhook_payload)
@@ -557,10 +535,10 @@ invariants:
 
         # Mock handler to raise an unexpected exception
         original_handle = webhook_handler.handle_webhook
-        
+
         async def failing_handler(*args, **kwargs):
             raise ValueError("Unexpected processing error")
-        
+
         webhook_handler.handle_webhook = failing_handler
 
         response = test_client.post(
@@ -568,9 +546,9 @@ invariants:
             headers={
                 "X-Hub-Signature-256": "sha256=test",
                 "X-GitHub-Delivery": "test-error-123",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             },
-            content=payload_bytes
+            content=payload_bytes,
         )
 
         # Should still return 200 to avoid GitHub retries
@@ -586,10 +564,10 @@ invariants:
         review_worker: ReviewWorker,
         verdict_store_client: VerdictStoreClient,
         project_record: ProjectRecord,
-        mock_issue_creator: IssueCreator
+        mock_issue_creator: IssueCreator,
     ) -> None:
         """Test that Verdict Store writes complete before issue creation attempts.
-        
+
         This verifies the critical ordering requirement for durability.
         """
         call_order = []
@@ -618,13 +596,9 @@ invariants:
 
         delivery_id = "test-ordering-456"
 
-        with patch("tempfile.mkdtemp", return_value="/tmp"), \
-             patch("pathlib.Path.write_text"):
-            
+        with patch("tempfile.mkdtemp", return_value="/tmp"), patch("pathlib.Path.write_text"):
             await review_worker.process_review(
-                delivery_id=delivery_id,
-                repo="test-org/test-repo",
-                pr_number=42
+                delivery_id=delivery_id, repo="test-org/test-repo", pr_number=42
             )
 
         # Verify correct ordering: all verdict/findings writes before issue creation
@@ -641,9 +615,7 @@ invariants:
         verdict_store_client.write_findings = original_write_findings
 
     async def test_database_transaction_integrity(
-        self,
-        temp_db_path: Path,
-        project_record: ProjectRecord
+        self, temp_db_path: Path, project_record: ProjectRecord
     ) -> None:
         """Test that database writes are transactionally safe."""
         # Create a new client for direct database manipulation
@@ -652,7 +624,7 @@ invariants:
         # Simulate a scenario where findings write might fail
         delivery_id = "test-transaction-123"
 
-        from verdict_store.client import VerdictRecord, FindingRecord
+        from verdict_store.client import FindingRecord, VerdictRecord
 
         verdict = VerdictRecord(
             delivery_id=delivery_id,
@@ -667,7 +639,7 @@ invariants:
             ugly=None,
             closing_question="Question?",
             raw_response="Raw response",
-            template_version="1.0.0"
+            template_version="1.0.0",
         )
 
         # Write verdict successfully
@@ -681,7 +653,7 @@ invariants:
                 bucket="bad",
                 text="Test finding",
                 severity="WARN",
-                invariant_id=None
+                invariant_id=None,
             )
         ]
 

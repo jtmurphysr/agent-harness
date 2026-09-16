@@ -1,6 +1,5 @@
 """Tests for cli/render.py."""
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -30,7 +29,7 @@ propagation: opt_in
 **Stack:** {{ stack.language }}
 """)
 
-        # Create architect template  
+        # Create architect template
         architect_template = templates_dir / "architect.template.md"
         architect_template.write_text("""---
 version: "2.0.0"
@@ -107,7 +106,7 @@ This is a test project.
         # Verify lock file was created
         lock_file = output_dir / "templates_lock.yml"
         assert lock_file.exists()
-        
+
         # Check lock file content
         lock_content = lock_file.read_text()
         assert "engineer.template.md: 1.0.0" in lock_content
@@ -119,7 +118,7 @@ This is a test project.
         assert "<!-- GENERATED FILE — DO NOT EDIT -->" in engineer_content
         assert "Source: engineer.template.md v1.0.0 + project_context.md" in engineer_content
         assert "Regenerate with: harness render" in engineer_content
-        
+
         # Verify template was rendered with context
         assert "Engineer Review for test-project" in engineer_content
         assert "A test project for validation" in engineer_content
@@ -218,7 +217,7 @@ Invalid context.
         # Rendering should fail
         with pytest.raises(RenderError) as exc_info:
             render_agents(context_file, templates_dir, output_dir)
-        
+
         assert "Invalid project context" in str(exc_info.value)
 
     def test_render_agents_missing_templates(self, tmp_path: Path) -> None:
@@ -267,7 +266,7 @@ Test project.
         # Rendering should fail because engineer template is missing
         with pytest.raises(RenderError) as exc_info:
             render_agents(context_file, templates_dir, output_dir)
-        
+
         assert "Template file not found" in str(exc_info.value)
 
     def test_render_agents_updates_lock_file(self, tmp_path: Path) -> None:
@@ -323,7 +322,7 @@ Test project.
         # Create output directory with existing lock file
         output_dir = tmp_path / "output"
         output_dir.mkdir()
-        
+
         existing_lock = output_dir / "templates_lock.yml"
         existing_lock.write_text("""architect.template.md: '1.0.0'
 engineer.template.md: '1.0.0'
@@ -393,7 +392,7 @@ Test project.
         # Create output directory with some existing files
         output_dir = tmp_path / "output"
         output_dir.mkdir()
-        
+
         existing_file = output_dir / "existing.txt"
         existing_file.write_text("This should be preserved")
 
@@ -403,7 +402,7 @@ Test project.
         # Verify existing file is preserved
         assert existing_file.exists()
         assert existing_file.read_text() == "This should be preserved"
-        
+
         # Verify new file was created
         assert (output_dir / "engineer.md").exists()
 
@@ -462,7 +461,7 @@ Test project.
         # Rendering should fail with version extraction error
         with pytest.raises(RenderError) as exc_info:
             render_agents(context_file, templates_dir, output_dir)
-        
+
         assert "No version found in template frontmatter" in str(exc_info.value)
 
     def test_render_agents_deploy_missing_template_continues(self, tmp_path: Path) -> None:
@@ -586,7 +585,7 @@ Test project.
         # Rendering should fail with composition error
         with pytest.raises(RenderError) as exc_info:
             render_agents(context_file, templates_dir, output_dir)
-        
+
         assert "Failed to render engineer" in str(exc_info.value)
 
     def test_render_agents_no_lock_update(self, tmp_path: Path) -> None:
@@ -647,6 +646,6 @@ Test project.
 
         # Verify agent was created
         assert (output_dir / "engineer.md").exists()
-        
+
         # Verify lock file was NOT created
         assert not (output_dir / "templates_lock.yml").exists()

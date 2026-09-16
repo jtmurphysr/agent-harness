@@ -1,7 +1,5 @@
 """Tests for notifications.publisher module."""
 
-from unittest.mock import patch
-
 import httpx
 import pytest
 import respx
@@ -67,7 +65,7 @@ class TestNotificationPublisher:
 
         assert mock_request.called
         request = mock_request.calls[0].request
-        
+
         # Verify request body
         assert b"Review found 3 warnings" in request.content
 
@@ -82,7 +80,7 @@ class TestNotificationPublisher:
     ) -> None:
         """Test BLOCK severity gets maximum priority."""
         topic = "harness-def456"
-        
+
         mock_request = respx.post(f"{publisher._base_url}/{topic}").mock(
             return_value=httpx.Response(200)
         )
@@ -107,7 +105,7 @@ class TestNotificationPublisher:
     ) -> None:
         """Test BLOCK severity with single finding uses singular message."""
         topic = "harness-def456"
-        
+
         mock_request = respx.post(f"{publisher._base_url}/{topic}").mock(
             return_value=httpx.Response(200)
         )
@@ -115,7 +113,7 @@ class TestNotificationPublisher:
         async with publisher:
             await publisher.publish_review_complete(
                 topic=topic,
-                project_name="critical-app", 
+                project_name="critical-app",
                 pr_number=1,
                 highest_severity="BLOCK",
                 finding_count=1,
@@ -130,7 +128,7 @@ class TestNotificationPublisher:
     ) -> None:
         """Test WARN severity gets normal priority."""
         topic = "harness-ghi789"
-        
+
         mock_request = respx.post(f"{publisher._base_url}/{topic}").mock(
             return_value=httpx.Response(200)
         )
@@ -155,7 +153,7 @@ class TestNotificationPublisher:
     ) -> None:
         """Test PASS severity gets low priority."""
         topic = "harness-jkl012"
-        
+
         mock_request = respx.post(f"{publisher._base_url}/{topic}").mock(
             return_value=httpx.Response(200)
         )
@@ -180,7 +178,7 @@ class TestNotificationPublisher:
     ) -> None:
         """Test PASS severity with minor notes."""
         topic = "harness-mno345"
-        
+
         mock_request = respx.post(f"{publisher._base_url}/{topic}").mock(
             return_value=httpx.Response(200)
         )
@@ -203,7 +201,7 @@ class TestNotificationPublisher:
     ) -> None:
         """Test unknown severity defaults to low priority."""
         topic = "harness-pqr678"
-        
+
         mock_request = respx.post(f"{publisher._base_url}/{topic}").mock(
             return_value=httpx.Response(200)
         )
@@ -226,7 +224,7 @@ class TestNotificationPublisher:
     ) -> None:
         """Test network error raises NotificationError."""
         topic = "harness-error"
-        
+
         respx.post(f"{publisher._base_url}/{topic}").mock(
             side_effect=httpx.ConnectError("Connection failed")
         )
@@ -250,7 +248,7 @@ class TestNotificationPublisher:
     ) -> None:
         """Test HTTP error raises NotificationError."""
         topic = "harness-http-error"
-        
+
         respx.post(f"{publisher._base_url}/{topic}").mock(
             return_value=httpx.Response(500, text="Internal Server Error")
         )
@@ -259,7 +257,7 @@ class TestNotificationPublisher:
             with pytest.raises(NotificationError) as exc_info:
                 await publisher.publish_review_complete(
                     topic=topic,
-                    project_name="test-app", 
+                    project_name="test-app",
                     pr_number=1,
                     highest_severity="WARN",
                     finding_count=1,

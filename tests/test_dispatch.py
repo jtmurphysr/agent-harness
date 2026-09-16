@@ -77,7 +77,7 @@ Provide your review in the following format:
 ## Good
 What was done well
 
-## Bad  
+## Bad
 Issues that need fixing
 
 ## Ugly
@@ -212,9 +212,12 @@ class TestReviewerDispatcher:
         """Test when all reviewers fail."""
         dispatcher = ReviewerDispatcher(mock_model_resolver)
 
-        with patch.object(
-            dispatcher, "_dispatch_single_reviewer", side_effect=DispatchError("Mock failure")
-        ), pytest.raises(DispatchError, match="All reviewers failed"):
+        with (
+            patch.object(
+                dispatcher, "_dispatch_single_reviewer", side_effect=DispatchError("Mock failure")
+            ),
+            pytest.raises(DispatchError, match="All reviewers failed"),
+        ):
             await dispatcher.dispatch_reviewers(
                 temp_agent_files, sample_pr_diff, sample_project_context
             )
@@ -325,9 +328,12 @@ class TestReviewerDispatcher:
         # Set cost tracker to exceed cap
         dispatcher._cost_tracker["test-project"] = 150.0  # Exceeds cap of 100.0
 
-        with patch.object(
-            dispatcher, "_invoke_local_inference", side_effect=Exception("Local failed")
-        ), pytest.raises(DispatchError, match="Monthly cost cap.*exceeded"):
+        with (
+            patch.object(
+                dispatcher, "_invoke_local_inference", side_effect=Exception("Local failed")
+            ),
+            pytest.raises(DispatchError, match=r"Monthly cost cap.*exceeded"),
+        ):
             await dispatcher._dispatch_single_reviewer(
                 "engineer",
                 temp_agent_files["engineer"],

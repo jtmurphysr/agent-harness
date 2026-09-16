@@ -1,7 +1,6 @@
 """Tests for github.pr module."""
 
 import base64
-import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -45,7 +44,7 @@ index 1234567..abcdefg 100644
  def main():
      print("Hello World")
 +    print("Added line")
- 
+
  if __name__ == "__main__":
      main()
 diff --git a/src/utils.py b/src/utils.py
@@ -64,7 +63,7 @@ def mock_file_content() -> str:
     """Mock file content."""
     return """def main():
     print("Hello World")
-    
+
 if __name__ == "__main__":
     main()
 """
@@ -98,7 +97,7 @@ class TestPRClient:
             side_effect=[
                 httpx.Response(200, json=mock_pr_data),
                 httpx.Response(200, text=mock_diff_content),
-            ]
+            ],
         ):
             result = await pr_client.get_pr_diff("owner/repo", 42)
 
@@ -126,19 +125,21 @@ class TestPRClient:
     async def test_get_pr_diff_rate_limited(self, pr_client: PRClient) -> None:
         """Test PR diff retrieval with rate limiting."""
         # Use patch to mock the internal client behavior
-        with patch.object(
-            pr_client._client,
-            "request",
-            side_effect=[
-                httpx.Response(403, text="rate limit exceeded"),
-                httpx.Response(200, json={"number": 42, "head": {"sha": "abc123"}}),
-                httpx.Response(200, text="mock diff"),
-            ],
+        with (
+            patch.object(
+                pr_client._client,
+                "request",
+                side_effect=[
+                    httpx.Response(403, text="rate limit exceeded"),
+                    httpx.Response(200, json={"number": 42, "head": {"sha": "abc123"}}),
+                    httpx.Response(200, text="mock diff"),
+                ],
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
-            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-                result = await pr_client.get_pr_diff("owner/repo", 42)
-                assert result.pr_number == 42
-                mock_sleep.assert_called_once()
+            result = await pr_client.get_pr_diff("owner/repo", 42)
+            assert result.pr_number == 42
+            mock_sleep.assert_called_once()
 
     @respx.mock
     async def test_get_file_content_success(
@@ -292,19 +293,21 @@ class TestRetryLogic:
     async def test_server_error_retry(self, pr_client: PRClient) -> None:
         """Test retry logic for server errors."""
         # Use patch to mock the internal client behavior
-        with patch.object(
-            pr_client._client,
-            "request",
-            side_effect=[
-                httpx.Response(500, text="Internal Server Error"),
-                httpx.Response(200, json={"number": 42, "head": {"sha": "abc123"}}),
-                httpx.Response(200, text="mock diff"),
-            ],
+        with (
+            patch.object(
+                pr_client._client,
+                "request",
+                side_effect=[
+                    httpx.Response(500, text="Internal Server Error"),
+                    httpx.Response(200, json={"number": 42, "head": {"sha": "abc123"}}),
+                    httpx.Response(200, text="mock diff"),
+                ],
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
-            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-                result = await pr_client.get_pr_diff("owner/repo", 42)
-                assert result.pr_number == 42
-                mock_sleep.assert_called_once()
+            result = await pr_client.get_pr_diff("owner/repo", 42)
+            assert result.pr_number == 42
+            mock_sleep.assert_called_once()
 
     @respx.mock
     async def test_max_retries_exceeded(self, pr_client: PRClient) -> None:
@@ -317,9 +320,11 @@ class TestRetryLogic:
             return_value=httpx.Response(500, text="Internal Server Error")
         )
 
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            with pytest.raises(PRError, match="GitHub API server error: 500"):
-                await pr_client.get_pr_diff(repo, pr_number)
+        with (
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            pytest.raises(PRError, match="GitHub API server error: 500"),
+        ):
+            await pr_client.get_pr_diff(repo, pr_number)
 
     @respx.mock
     async def test_forbidden_not_rate_limit(self, pr_client: PRClient) -> None:
@@ -339,16 +344,18 @@ class TestRetryLogic:
         repo = "owner/repo"
         pr_number = 42
 
-        with patch.object(
-            pr_client._client,
-            "request",
-            side_effect=[
-                httpx.RequestError("Connection failed"),
-                httpx.Response(200, json={"number": 42, "head": {"sha": "abc123"}}),
-                httpx.Response(200, text="mock diff"),
-            ],
+        with (
+            patch.object(
+                pr_client._client,
+                "request",
+                side_effect=[
+                    httpx.RequestError("Connection failed"),
+                    httpx.Response(200, json={"number": 42, "head": {"sha": "abc123"}}),
+                    httpx.Response(200, text="mock diff"),
+                ],
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
-            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-                result = await pr_client.get_pr_diff(repo, pr_number)
-                assert result.pr_number == 42
-                mock_sleep.assert_called_once()
+            result = await pr_client.get_pr_diff(repo, pr_number)
+            assert result.pr_number == 42
+            mock_sleep.assert_called_once()

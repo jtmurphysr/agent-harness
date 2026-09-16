@@ -13,7 +13,7 @@ import json
 import tempfile
 import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -110,10 +110,11 @@ Updated SRE template content here.
     @pytest.mark.asyncio
     async def test_template_upgrade_propagation_e2e(self, template_syncer):
         """End-to-end test of template version upgrade across fleet."""
-        with patch.object(template_syncer, '_list_fleet_projects') as mock_projects, \
-             patch.object(template_syncer, '_get_project_template_lock') as mock_lock, \
-             patch.object(template_syncer, '_create_template_upgrade_pr') as mock_create_pr:
-
+        with (
+            patch.object(template_syncer, "_list_fleet_projects") as mock_projects,
+            patch.object(template_syncer, "_get_project_template_lock") as mock_lock,
+            patch.object(template_syncer, "_create_template_upgrade_pr") as mock_create_pr,
+        ):
             # Mock fleet projects
             mock_projects.return_value = [
                 {"repo": "owner/project1", "project_name": "Project One"},
@@ -150,8 +151,9 @@ Updated SRE template content here.
             assert mock_create_pr.call_count == 2
 
             # Verify the first project's updates
-            project1_call = [call for call in mock_create_pr.call_args_list 
-                             if call[0][0] == "owner/project1"][0]
+            project1_call = next(
+                call for call in mock_create_pr.call_args_list if call[0][0] == "owner/project1"
+            )
             project1_updates = project1_call[0][1]
             assert len(project1_updates) == 2  # engineer and architect updates
 
@@ -160,8 +162,9 @@ Updated SRE template content here.
             assert "architect.template.md" in project1_template_names
 
             # Verify the second project's updates
-            project2_call = [call for call in mock_create_pr.call_args_list 
-                             if call[0][0] == "owner/project2"][0]
+            project2_call = next(
+                call for call in mock_create_pr.call_args_list if call[0][0] == "owner/project2"
+            )
             project2_updates = project2_call[0][1]
             assert len(project2_updates) == 2  # architect and sre updates
 
@@ -179,15 +182,15 @@ Updated SRE template content here.
                 old_version="1.1.0",
                 new_version="1.2.0",
                 repo="owner/test-project",
-                project_name="Test Project"
+                project_name="Test Project",
             ),
             TemplateUpdate(
                 template_name="architect.template.md",
                 old_version="2.0.0",
                 new_version="2.1.0",
                 repo="owner/test-project",
-                project_name="Test Project"
-            )
+                project_name="Test Project",
+            ),
         ]
 
         # Mock GitHub API calls
@@ -208,34 +211,25 @@ Updated SRE template content here.
             )
 
             # Mock lock file get
-            current_lock = {
-                "engineer.template.md": "1.1.0",
-                "architect.template.md": "2.0.0"
-            }
+            current_lock = {"engineer.template.md": "1.1.0", "architect.template.md": "2.0.0"}
             lock_content = yaml.safe_dump(current_lock)
             import base64
+
             encoded_content = base64.b64encode(lock_content.encode()).decode()
 
             respx.get(
                 "https://api.github.com/repos/owner/test-project/contents/.factory/templates_lock.yml"
-            ).mock(
-                httpx.Response(200, json={
-                    "content": encoded_content,
-                    "sha": "def456"
-                })
-            )
+            ).mock(httpx.Response(200, json={"content": encoded_content, "sha": "def456"}))
 
             # Mock lock file update
             respx.put(
                 "https://api.github.com/repos/owner/test-project/contents/.factory/templates_lock.yml"
-            ).mock(
-                httpx.Response(200, json={})
-            )
+            ).mock(httpx.Response(200, json={}))
 
             # Mock PR creation with verification
             def verify_pr_payload(request):
                 payload = json.loads(request.content)
-                
+
                 # Verify title contains version diff
                 expected_title = "factory: template upgrade — 2 templates updated"
                 assert payload["title"] == expected_title
@@ -252,10 +246,13 @@ Updated SRE template content here.
                 assert payload["base"] == "main"
                 assert payload["head"].startswith("factory/template-upgrade-")
 
-                return httpx.Response(201, json={
-                    "number": 42,
-                    "html_url": "https://github.com/owner/test-project/pull/42"
-                })
+                return httpx.Response(
+                    201,
+                    json={
+                        "number": 42,
+                        "html_url": "https://github.com/owner/test-project/pull/42",
+                    },
+                )
 
             respx.post("https://api.github.com/repos/owner/test-project/pulls").mock(
                 side_effect=verify_pr_payload
@@ -278,7 +275,7 @@ Updated SRE template content here.
                 old_version="1.1.0",
                 new_version="1.2.0",
                 repo="owner/test-project",
-                project_name="Test Project"
+                project_name="Test Project",
             )
         ]
 
@@ -299,37 +296,33 @@ Updated SRE template content here.
             original_lock = {
                 "engineer.template.md": "1.1.0",
                 "architect.template.md": "2.0.0",
-                "sre.template.md": "1.5.0"
+                "sre.template.md": "1.5.0",
             }
             lock_content = yaml.safe_dump(original_lock, default_flow_style=False, sort_keys=True)
             import base64
+
             encoded_content = base64.b64encode(lock_content.encode()).decode()
 
             respx.get(
                 "https://api.github.com/repos/owner/test-project/contents/.factory/templates_lock.yml"
-            ).mock(
-                httpx.Response(200, json={
-                    "content": encoded_content,
-                    "sha": "def456"
-                })
-            )
+            ).mock(httpx.Response(200, json={"content": encoded_content, "sha": "def456"}))
 
             # Mock lock file update with verification
             def verify_lock_update(request):
                 payload = json.loads(request.content)
-                
+
                 # Decode and verify the updated content
                 new_content = base64.b64decode(payload["content"]).decode("utf-8")
                 updated_lock = yaml.safe_load(new_content)
-                
+
                 # Verify that only the engineer template was updated
                 expected_lock = {
                     "architect.template.md": "2.0.0",
                     "engineer.template.md": "1.2.0",  # Updated
-                    "sre.template.md": "1.5.0"
+                    "sre.template.md": "1.5.0",
                 }
                 assert updated_lock == expected_lock
-                
+
                 # Verify commit message
                 assert "Update template versions" in payload["message"]
                 assert "engineer.template.md from v1.1.0 to v1.2.0" in payload["message"]
@@ -353,10 +346,11 @@ Updated SRE template content here.
     @pytest.mark.asyncio
     async def test_template_upgrade_fleet_wide(self, template_syncer):
         """Test template upgrades across multiple projects in the fleet."""
-        with patch.object(template_syncer, '_list_fleet_projects') as mock_projects, \
-             patch.object(template_syncer, '_get_project_template_lock') as mock_lock, \
-             patch.object(template_syncer, '_create_template_upgrade_pr') as mock_create_pr:
-
+        with (
+            patch.object(template_syncer, "_list_fleet_projects") as mock_projects,
+            patch.object(template_syncer, "_get_project_template_lock") as mock_lock,
+            patch.object(template_syncer, "_create_template_upgrade_pr") as mock_create_pr,
+        ):
             # Mock a large fleet of projects
             mock_projects.return_value = [
                 {"repo": f"owner/project{i}", "project_name": f"Project {i}"}
@@ -395,7 +389,7 @@ Updated SRE template content here.
             # Verify correct projects were updated
             expected_updated = ["owner/project1", "owner/project2", "owner/project3"]
             assert sorted(result["updated"]) == sorted(expected_updated)
-            
+
             # Project4 has current versions, project5 has no lock file (both skipped)
             expected_skipped = ["owner/project4", "owner/project5"]
             assert sorted(result["skipped"]) == sorted(expected_skipped)
@@ -404,9 +398,7 @@ Updated SRE template content here.
             assert mock_create_pr.call_count == 3
 
             # Verify each project gets the right updates
-            pr_calls_by_repo = {
-                call[0][0]: call[0][1] for call in mock_create_pr.call_args_list
-            }
+            pr_calls_by_repo = {call[0][0]: call[0][1] for call in mock_create_pr.call_args_list}
 
             # Project1 and project2 should get engineer update
             for repo in ["owner/project1", "owner/project2"]:
@@ -426,13 +418,12 @@ Updated SRE template content here.
     @pytest.mark.asyncio
     async def test_template_upgrade_dry_run_mode(self, template_syncer):
         """Test template upgrade in dry run mode - no PRs created."""
-        with patch.object(template_syncer, '_list_fleet_projects') as mock_projects, \
-             patch.object(template_syncer, '_get_project_template_lock') as mock_lock, \
-             patch.object(template_syncer, '_create_template_upgrade_pr') as mock_create_pr:
-
-            mock_projects.return_value = [
-                {"repo": "owner/project1", "project_name": "Project One"}
-            ]
+        with (
+            patch.object(template_syncer, "_list_fleet_projects") as mock_projects,
+            patch.object(template_syncer, "_get_project_template_lock") as mock_lock,
+            patch.object(template_syncer, "_create_template_upgrade_pr") as mock_create_pr,
+        ):
+            mock_projects.return_value = [{"repo": "owner/project1", "project_name": "Project One"}]
 
             mock_lock.return_value = {
                 "engineer.template.md": "1.1.0",  # Old version
@@ -453,10 +444,11 @@ Updated SRE template content here.
     @pytest.mark.asyncio
     async def test_template_upgrade_handles_errors_gracefully(self, template_syncer):
         """Test that template upgrade handles individual project errors gracefully."""
-        with patch.object(template_syncer, '_list_fleet_projects') as mock_projects, \
-             patch.object(template_syncer, '_get_project_template_lock') as mock_lock, \
-             patch.object(template_syncer, '_create_template_upgrade_pr') as mock_create_pr:
-
+        with (
+            patch.object(template_syncer, "_list_fleet_projects") as mock_projects,
+            patch.object(template_syncer, "_get_project_template_lock") as mock_lock,
+            patch.object(template_syncer, "_create_template_upgrade_pr") as mock_create_pr,
+        ):
             mock_projects.return_value = [
                 {"repo": "owner/good-project", "project_name": "Good Project"},
                 {"repo": "owner/bad-project", "project_name": "Bad Project"},
@@ -488,13 +480,13 @@ Updated SRE template content here.
             assert result["updated"] == ["owner/good-project"]
             assert sorted(result["skipped"]) == [
                 "owner/another-good-project",  # PR creation failed
-                "owner/bad-project"  # Lock retrieval failed
+                "owner/bad-project",  # Lock retrieval failed
             ]
 
     @pytest.mark.asyncio
     async def test_template_upgrade_error_handling(self, template_syncer):
         """Test proper error handling and reporting in template upgrade."""
-        with patch.object(template_syncer, '_get_current_template_versions') as mock_versions:
+        with patch.object(template_syncer, "_get_current_template_versions") as mock_versions:
             # Test sync failure when getting current versions fails
             mock_versions.side_effect = Exception("Template parsing error")
 

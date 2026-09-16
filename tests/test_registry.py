@@ -2,8 +2,7 @@
 
 import sqlite3
 import uuid
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -131,9 +130,7 @@ class TestProjectRegistry:
         assert result is None
         mock_client.get_project_by_repo.assert_called_once_with(repo)
 
-    def test_get_project_database_error(
-        self, registry: ProjectRegistry, mock_client: Mock
-    ) -> None:
+    def test_get_project_database_error(self, registry: ProjectRegistry, mock_client: Mock) -> None:
         """Test get_project with database error."""
         repo = "org/test-repo"
 
@@ -162,18 +159,18 @@ class TestRegistrationError:
         """Test RegistrationError can be created and raised."""
         message = "Test error message"
         error = RegistrationError(message)
-        
+
         assert str(error) == message
         assert isinstance(error, Exception)
 
     def test_registration_error_with_cause(self) -> None:
         """Test RegistrationError with underlying cause."""
         cause = sqlite3.IntegrityError("Database constraint")
-        
+
         with pytest.raises(RegistrationError) as exc_info:
             try:
                 raise cause
             except sqlite3.IntegrityError as e:
                 raise RegistrationError("Registration failed") from e
-        
+
         assert exc_info.value.__cause__ == cause
