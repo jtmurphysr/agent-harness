@@ -128,7 +128,12 @@ jobs:
         uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ secrets.GH_PAT }}
+          # GH_WORKFLOW_PAT (repo + workflow scope), not GH_PAT: this is the token the
+          # agent pushes with, and pushes that touch .github/workflows/ are rejected
+          # without `workflow` scope (#19). The compensating control is the
+          # workflow-guard job in ci.yml, which forces human-review on any such PR.
+          # Every other GH_PAT use in this file is read/label/comment and stays as is.
+          github_token: ${{ secrets.GH_WORKFLOW_PAT }}
           track_progress: true
           label_trigger: "agent-task"
           claude_args: --allowedTools "Bash,Edit,Write,Read,Glob,Grep,LS,TodoRead,TodoWrite"
@@ -164,7 +169,12 @@ jobs:
         uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ secrets.GH_PAT }}
+          # GH_WORKFLOW_PAT (repo + workflow scope), not GH_PAT: this is the token the
+          # agent pushes with, and pushes that touch .github/workflows/ are rejected
+          # without `workflow` scope (#19). The compensating control is the
+          # workflow-guard job in ci.yml, which forces human-review on any such PR.
+          # Every other GH_PAT use in this file is read/label/comment and stays as is.
+          github_token: ${{ secrets.GH_WORKFLOW_PAT }}
           # No track_progress: workflow_dispatch is not an entity event, so
           # detectMode() falls through to agent -- the behaviour this step
           # already had. Setting it here would throw in validateTrackProgressEvent.
@@ -436,7 +446,12 @@ jobs:
         uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ secrets.GH_PAT }}
+          # GH_WORKFLOW_PAT (repo + workflow scope), not GH_PAT: this is the token the
+          # agent pushes with, and pushes that touch .github/workflows/ are rejected
+          # without `workflow` scope (#19). The compensating control is the
+          # workflow-guard job in ci.yml, which forces human-review on any such PR.
+          # Every other GH_PAT use in this file is read/label/comment and stays as is.
+          github_token: ${{ secrets.GH_WORKFLOW_PAT }}
           # issue_comment is an entity event, so without this detectMode()
           # would return agent (detector.ts:41) and drop the tracking comment.
           track_progress: true
