@@ -30,6 +30,19 @@ jobs:
       # exited 0 on every merge from April 27 onward. v1 replaced that gate
       # with `containsTrigger = !!inputs.prompt` for agent mode: the prompt is
       # the trigger, and the event type no longer participates.
+      # ruff must exist BEFORE the agent runs: it pushes straight to main, so the
+      # only moment it can format its own output is before its own commit. CI runs
+      # `ruff format --check .` with no exclusions and ruff formats Python blocks
+      # inside Markdown, so an unformatted learnings file turns main red for every
+      # open PR -- and stays red until something else pushes. b91c91c did exactly
+      # that: main was red from 2026-08-24 to 2026-09-15, unnoticed, because the
+      # only other weekly job could not open PRs (see gc-agent.yml, e2040d5).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install --quiet ruff
+
       - name: Extract learnings
         uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
@@ -38,7 +51,7 @@ jobs:
           # v1 renames: `mode` is inferred by detectMode() and no longer an
           # input, `direct_prompt` became `prompt`, and `allowed_tools` moved
           # into claude_args as a Claude CLI flag.
-          claude_args: --allowedTools "Bash(gh:*),Bash(git:*),Bash(mkdir:*),Read,Write,Edit,LS,Glob,Grep,TodoWrite"
+          claude_args: --allowedTools "Bash(gh:*),Bash(git:*),Bash(mkdir:*),Bash(ruff:*),Read,Write,Edit,LS,Glob,Grep,TodoWrite"
           prompt: |
             You are the Compound Learning Agent for this repository's autonomous development harness.
 
@@ -142,14 +155,26 @@ jobs:
 
             ## Step 5: Commit and push
 
-            Stage your changes and commit:
+            Format first, then verify, then commit. Run these in order and do not
+            skip the check -- you are pushing directly to `main` with no CI in front
+            of you, so this block is the only thing standing between an unformatted
+            file and a red build for every other agent in the repo.
 
             ```
+            ruff format docs/learnings/
+            ruff format --check .
             git add docs/learnings/
             git add AGENTS.md  # only if modified
             git commit -m "compound: learnings from PR #${{ github.event.pull_request.number }}"
             git push origin main
             ```
+
+            `ruff format --check .` MUST pass before you commit. If it reports a file
+            would be reformatted, run `ruff format` on that file and re-check. Do not
+            push while it fails. Note that ruff formats Python code blocks inside
+            Markdown, so a fenced ```python example in your learnings file is subject
+            to it exactly like a `.py` source file -- aligned inline comments and
+            multi-line comprehensions are the usual offenders.
 
             ## Step 6: Report
 
@@ -210,6 +235,17 @@ jobs:
             exit 1
           fi
           echo "$f present on origin/main (${bytes}B)"
+          # Prevention above is a prompt instruction, which is not a guarantee.
+          # This is the detection half: if the agent skipped the format step, fail
+          # HERE, attributed to this run, rather than letting it surface weeks later
+          # as a mystery lint failure on an unrelated PR.
+          git cat-file -p "origin/main:$f" > "${RUNNER_TEMP}/pr-${PR}.md"
+          if ! ruff format --check "${RUNNER_TEMP}/pr-${PR}.md" >/dev/null 2>&1; then
+            echo "::error::$f landed on origin/main unformatted. main is now red for every open PR until this is fixed. The agent skipped or failed the 'ruff format docs/learnings/' step. Fix: ruff format $f && git commit && git push."
+            ruff format --diff "${RUNNER_TEMP}/pr-${PR}.md" 2>&1 | head -25
+            exit 1
+          fi
+          echo "$f is ruff-clean"
 
       - name: Upload compound learning log
         if: always()
