@@ -67,6 +67,10 @@ jobs:
       # bugs shipped before this job existed. Reading them did not catch any.
       - name: Test hook guards
         run: .claude/hooks/test-hooks.sh
+      # The eighth. The sequential dispatch gate lived inline in a workflow and
+      # "assumed satisfied" on any predecessor it could not resolve (issue #11).
+      - name: Test dispatch gate
+        run: scripts/test-resolve-predecessor.sh
 
   lint:
     name: Lint & Types
