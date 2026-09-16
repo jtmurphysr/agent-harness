@@ -39,6 +39,60 @@ jobs:
             echo "No pyproject.toml — skipping Python checks until project is initialized."
           fi
 
+  # The dispatch PAT (GH_WORKFLOW_PAT) carries `workflow` scope so agents can
+  # push changes under .github/workflows/ -- otherwise the factory cannot fix
+  # the factory (#19). That scope lets an agent rewrite the CI that gates its
+  # own PRs, including this file and the auto-merge conditions below. This job
+  # is the compensating control: any PR touching a workflow file gets
+  # `human-review` applied HERE, by CI, not by the agent, and auto-merge also
+  # checks the output directly so a failed label write cannot open the door.
+  # An agent may PROPOSE a change to the rules. It may not land one alone.
+  workflow-guard:
+    name: Workflow Change Guard
+    runs-on: ubuntu-latest
+    needs: check-project
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+      contents: read
+    outputs:
+      touches_workflows: ${{ steps.scan.outputs.touches_workflows }}
+    steps:
+      - id: scan
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          changed=$(gh pr diff "$PR" --repo "${{ github.repository }}" --name-only)
+          hits=$(printf '%s\n' "$changed" | grep -E '^\.github/workflows/' || true)
+          if [ -z "$hits" ]; then
+            echo "touches_workflows=false" >> "$GITHUB_OUTPUT"
+            echo "No workflow files changed."
+            exit 0
+          fi
+          echo "touches_workflows=true" >> "$GITHUB_OUTPUT"
+          echo "Workflow files changed:"; printf '  %s\n' $hits
+          # Idempotent: re-runs on the same PR must not stack comments.
+          if gh pr view "$PR" --repo "${{ github.repository }}" --json labels -q '.labels[].name' | grep -qx 'human-review'; then
+            echo "human-review already present."
+            exit 0
+          fi
+          gh pr edit "$PR" --repo "${{ github.repository }}" --add-label "human-review"
+          # Build the comment in a file: a heredoc inside a YAML block scalar has to
+          # stay indented, and markdown bold at column 0 reads as a YAML alias.
+          {
+            echo '**Workflow Change Guard:** this PR modifies CI/automation under `.github/workflows/`:'
+            echo
+            printf -- '- `%s`\n' $hits
+            echo
+            echo '`human-review` has been applied by CI. Auto-merge will not run on this PR regardless of who opened it or what other labels it carries. A human merges changes to the rules.'
+            echo
+            echo 'Review the workflow diff specifically for: auto-merge conditions, the sequential gate, secrets usage, and the `workflow-guard` job itself.'
+          } > "$RUNNER_TEMP/guard-comment.md"
+          gh pr comment "$PR" --repo "${{ github.repository }}" --body-file "$RUNNER_TEMP/guard-comment.md"
+          echo "::warning::Workflow files changed — human-review applied, auto-merge disabled for this PR."
+
   harness-lint:
     name: Harness Structure
     runs-on: ubuntu-latest
@@ -131,11 +185,16 @@ jobs:
   auto-merge:
     name: Auto-merge
     runs-on: ubuntu-latest
-    needs: [check-project, harness-lint, hook-tests, lint, test]
+    needs: [check-project, workflow-guard, harness-lint, hook-tests, lint, test]
     # hook-tests sits alongside harness-lint, OUTSIDE the has_project branch:
     # the hook guards do not depend on a project existing, and a guard that
     # cannot block a merge is a report, not a gate. Without this clause an
     # agent-authored PR that broke a fail-closed hook would auto-merge green.
+    #
+    # workflow-guard is checked TWICE: via the human-review label it applies,
+    # and via its output directly. The label is what a human sees; the output
+    # is what holds if the label write failed. Both must say "no workflow
+    # change" for an agent PR to merge itself.
     if: |
       always() &&
       github.event_name == 'pull_request' &&
@@ -145,6 +204,8 @@ jobs:
         contains(github.event.pull_request.labels.*.name, 'agent-task')
       ) &&
       !contains(github.event.pull_request.labels.*.name, 'human-review') &&
+      needs.workflow-guard.result == 'success' &&
+      needs.workflow-guard.outputs.touches_workflows != 'true' &&
       needs.harness-lint.result == 'success' &&
       needs.hook-tests.result == 'success' &&
       (

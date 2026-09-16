@@ -104,6 +104,7 @@ Before starting, confirm you have:
 - [ ] GitHub repository with Actions enabled
 - [ ] `ANTHROPIC_API_KEY` — your Anthropic key
 - [ ] `GH_PAT` — a fine-grained GitHub PAT with scopes: `contents:write`, `pull-requests:write`, `issues:write`
+- [ ] `GH_WORKFLOW_PAT` — a **second** PAT that can also write under `.github/workflows/`. Classic: `repo` + `workflow`. Fine-grained: the above plus `workflows:write`. See Step 3 for why there are two.
 - [ ] `gh` CLI authenticated locally (`gh auth status`)
 
 ---
@@ -134,13 +135,21 @@ git remote add origin git@github.com:<your-org>/<repo-name>.git
 GitHub → Repo → Settings → Secrets and variables → Actions → New repository secret
 ```
 
-| Secret | Value |
-|---|---|
-| `ANTHROPIC_API_KEY` | Your Anthropic key |
-| `GH_PAT` | Your fine-grained PAT |
+| Secret | Value | Used for |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Your Anthropic key | Every agent invocation |
+| `GH_PAT` | PAT **without** workflow permission | Gate checks, labels, comments, issue creation, auto-merge — everything that reads or annotates |
+| `GH_WORKFLOW_PAT` | PAT **with** workflow permission | The agent's `git push` only |
 
-> If Agent Dispatch fails with auth errors later, the PAT is the first thing to revalidate.
-> Run `gh auth status` and verify the PAT prefix matches what's in the secret.
+**Why two tokens.** GitHub rejects any push that creates or modifies a file under `.github/workflows/` unless the token carries workflow permission. Without it, an agent that fixes the harness's own CI finishes the work, passes every gate, and is refused at `git push` — the factory can fix everything except the factory. With it, an agent can rewrite the CI that gates its own PRs, including the auto-merge conditions.
+
+So the scope is split, and the split has a compensating control: the `Workflow Change Guard` job in `ci.yml` applies `human-review` to any PR that touches a workflow file, and `auto-merge` checks that job's output directly. **An agent may propose a change to the rules; it may not land one alone.** If you ever collapse the two tokens into one, keep that guard — it is what makes the wider scope safe.
+
+Do not give `GH_PAT` workflow permission "for convenience." It is used in ten places that only need to read and label; the narrower token limits what a leaked or misused credential can do.
+
+> If Agent Dispatch fails with auth errors later, the PATs are the first thing to revalidate.
+> A push rejected with `refusing to allow a Personal Access Token to create or update workflow`
+> means `GH_WORKFLOW_PAT` is missing, expired, or lacks workflow permission.
 
 ---
 
