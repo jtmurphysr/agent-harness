@@ -16,14 +16,12 @@ Usage:
 """
 
 import argparse
-import json
 import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-
 
 # ─────────────────────────────────────────────────────────────────
 # Data structures
@@ -95,12 +93,14 @@ def extract_merge_prs(cwd: Path) -> list[PRRecord]:
         match = re.match(r"^([a-f0-9]+)\s+Merge pull request #(\d+)\s+from\s+\S+/(.+)$", line)
         if match:
             commit_hash, pr_num, branch = match.groups()
-            records.append(PRRecord(
-                pr_number=int(pr_num),
-                merge_commit=commit_hash,
-                title="",
-                branch=branch,
-            ))
+            records.append(
+                PRRecord(
+                    pr_number=int(pr_num),
+                    merge_commit=commit_hash,
+                    title="",
+                    branch=branch,
+                )
+            )
 
     return records
 
@@ -127,7 +127,7 @@ def enrich_pr_record(record: PRRecord, cwd: Path) -> None:
     for commit_line in commits_raw.splitlines():
         if not commit_line.strip():
             continue
-        commit_hash, *msg_parts = commit_line.split(maxsplit=1)
+        _commit_hash, *msg_parts = commit_line.split(maxsplit=1)
         msg = msg_parts[0] if msg_parts else ""
 
         if msg.startswith("feat:"):
@@ -235,7 +235,7 @@ def load_issue_specs(project_dir: Path) -> dict[int, dict[str, str]]:
         if not spec_dir.exists():
             continue
         for f in spec_dir.iterdir():
-            if not f.suffix == ".md":
+            if f.suffix != ".md":
                 continue
             content = f.read_text(encoding="utf-8")
 
@@ -344,10 +344,7 @@ def generate_learning(
         module = infer_module_from_files(record.files_changed)
 
     # Determine outcome
-    if record.required_iteration:
-        outcome = "required-iteration"
-    else:
-        outcome = "clean"
+    outcome = "required-iteration" if record.required_iteration else "clean"
 
     # Build tags
     tags = []
@@ -355,7 +352,10 @@ def generate_learning(
         tags.append("required-iteration")
     if any("ruff" in c.lower() for c in record.fix_commits):
         tags.append("lint-fix")
-    if any("coverage" in c.lower() or "omit" in c.lower() for c in record.fix_commits + record.harness_commits):
+    if any(
+        "coverage" in c.lower() or "omit" in c.lower()
+        for c in record.fix_commits + record.harness_commits
+    ):
         tags.append("coverage-drift")
     if any("format" in c.lower() for c in record.fix_commits):
         tags.append("format-fix")
@@ -370,7 +370,9 @@ def generate_learning(
     spec_content = spec.get("content", "")
 
     # Build what was specified
-    what_specified = f"Issue #{record.issue_number}: {spec_title}" if record.issue_number else "No linked issue"
+    what_specified = (
+        f"Issue #{record.issue_number}: {spec_title}" if record.issue_number else "No linked issue"
+    )
     if spec_content:
         # Extract acceptance criteria summary
         ac_match = re.search(r"## Acceptance Criteria\n(.*?)(?=\n##|\Z)", spec_content, re.DOTALL)
@@ -380,13 +382,21 @@ def generate_learning(
     # Build what was delivered
     delivered_parts = []
     if record.feature_commits:
-        delivered_parts.append("Feature commits:\n" + "\n".join(f"  - {c}" for c in record.feature_commits))
+        delivered_parts.append(
+            "Feature commits:\n" + "\n".join(f"  - {c}" for c in record.feature_commits)
+        )
     if record.fix_commits:
-        delivered_parts.append("Fix commits (iterations):\n" + "\n".join(f"  - {c}" for c in record.fix_commits))
+        delivered_parts.append(
+            "Fix commits (iterations):\n" + "\n".join(f"  - {c}" for c in record.fix_commits)
+        )
     if record.harness_commits:
-        delivered_parts.append("Harness changes:\n" + "\n".join(f"  - {c}" for c in record.harness_commits))
+        delivered_parts.append(
+            "Harness changes:\n" + "\n".join(f"  - {c}" for c in record.harness_commits)
+        )
     if record.files_changed:
-        delivered_parts.append("Files changed:\n" + "\n".join(f"  - {f}" for f in record.files_changed[:20]))
+        delivered_parts.append(
+            "Files changed:\n" + "\n".join(f"  - {f}" for f in record.files_changed[:20])
+        )
     what_delivered = "\n\n".join(delivered_parts) if delivered_parts else "No details available"
 
     # Delta analysis
@@ -416,7 +426,10 @@ def generate_learning(
         future_specs_parts.append(
             "- Import ordering issues: specify `ruff check --fix .` before format to auto-fix import order"
         )
-    if any("coverage" in c.lower() or "omit" in c.lower() for c in record.fix_commits + record.harness_commits):
+    if any(
+        "coverage" in c.lower() or "omit" in c.lower()
+        for c in record.fix_commits + record.harness_commits
+    ):
         future_specs_parts.append(
             "- Coverage omit drift: each issue spec should include explicit coverage omit delta section"
         )
@@ -425,22 +438,34 @@ def generate_learning(
     future_specs = "\n".join(future_specs_parts)
 
     # For future warnings
-    future_warnings = "- No new domain warnings discovered." if not record.fix_commits else (
-        "- Agent required iteration on this module. Review fix commits for patterns that should become warnings."
+    future_warnings = (
+        "- No new domain warnings discovered."
+        if not record.fix_commits
+        else (
+            "- Agent required iteration on this module. Review fix commits for patterns that should become warnings."
+        )
     )
 
     # For AGENTS.md
-    agents_md = "- No AGENTS.md updates suggested." if not record.harness_commits else (
-        "- Harness infrastructure was modified during this PR. Review changes for constitutional updates:\n"
-        + "\n".join(f"  - {c}" for c in record.harness_commits)
+    agents_md = (
+        "- No AGENTS.md updates suggested."
+        if not record.harness_commits
+        else (
+            "- Harness infrastructure was modified during this PR. Review changes for constitutional updates:\n"
+            + "\n".join(f"  - {c}" for c in record.harness_commits)
+        )
     )
 
     # Reusable patterns — infer from module type
     patterns_parts = []
     if "resolver" in module:
-        patterns_parts.append("- Protocol-based dependency injection for testability (no concrete client imports in resolvers)")
+        patterns_parts.append(
+            "- Protocol-based dependency injection for testability (no concrete client imports in resolvers)"
+        )
     if "client" in module:
-        patterns_parts.append("- Centralized retry with exponential backoff — single ownership of retry logic")
+        patterns_parts.append(
+            "- Centralized retry with exponential backoff — single ownership of retry logic"
+        )
     if module == "pipeline":
         patterns_parts.append("- Multi-strategy resolution chain with explicit unresolved tracking")
     if not patterns_parts:
@@ -452,11 +477,15 @@ def generate_learning(
     if record.fix_commits:
         actions.append(f"Review fix patterns from PR #{record.pr_number} for preventable failures")
     if record.harness_commits:
-        actions.append(f"Evaluate harness changes from PR #{record.pr_number} for template inclusion")
+        actions.append(
+            f"Evaluate harness changes from PR #{record.pr_number} for template inclusion"
+        )
     if "coverage-drift" in tags:
         actions.append("Add coverage omit validation to structural linter")
     if not actions:
-        actions.append(f"PR #{record.pr_number} was clean — confirms current spec quality for {module}")
+        actions.append(
+            f"PR #{record.pr_number} was clean — confirms current spec quality for {module}"
+        )
 
     return LearningDocument(
         pr_number=record.pr_number,
@@ -526,7 +555,9 @@ outcome: {doc.outcome}
 # ─────────────────────────────────────────────────────────────────
 
 
-def render_harness_evolution(harness_commits: list[str], iteration_patterns: dict[str, list[str]]) -> str:
+def render_harness_evolution(
+    harness_commits: list[str], iteration_patterns: dict[str, list[str]]
+) -> str:
     """Render a summary document of harness evolution across the project."""
     commits_str = "\n".join(f"- {c}" for c in harness_commits)
     patterns_str = ""
@@ -570,12 +601,13 @@ def main() -> None:
     )
     parser.add_argument("project_dir", type=Path, help="Path to the project repo")
     parser.add_argument(
-        "--output", type=Path, default=Path("docs/learnings"),
-        help="Output directory for learning documents (default: docs/learnings)"
+        "--output",
+        type=Path,
+        default=Path("docs/learnings"),
+        help="Output directory for learning documents (default: docs/learnings)",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Print learnings to stdout without writing files"
+        "--dry-run", action="store_true", help="Print learnings to stdout without writing files"
     )
     args = parser.parse_args()
 
@@ -617,8 +649,8 @@ def main() -> None:
     print(f"   Learnings generated: {len(learnings)}")
 
     # Summary stats
-    clean = sum(1 for l in learnings if l.outcome == "clean")
-    iterated = sum(1 for l in learnings if l.outcome == "required-iteration")
+    clean = sum(1 for learning in learnings if learning.outcome == "clean")
+    iterated = sum(1 for learning in learnings if learning.outcome == "required-iteration")
     print(f"   Clean passes: {clean}")
     print(f"   Required iteration: {iterated}")
     print()
@@ -672,7 +704,7 @@ def main() -> None:
     print(f"   PRs analyzed: {len(pr_records)}")
     print(f"   Learnings: {len(learnings)} ({clean} clean, {iterated} iterated)")
     print(f"   Harness commits: {len(harness_evolution)}")
-    print(f"   Modules covered: {', '.join(sorted(set(l.module for l in learnings)))}")
+    print(f"   Modules covered: {', '.join(sorted({learning.module for learning in learnings}))}")
 
 
 if __name__ == "__main__":

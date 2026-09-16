@@ -232,8 +232,6 @@ class SoakTestRunner:
     ) -> None:
         """Monitor Verdict Store for consistency and duplicate detection."""
         check_interval = 30  # Check every 30 seconds
-        last_verdict_count = 0
-        seen_deliveries: set[str] = set()
 
         while datetime.now() < end_time and self._running:
             try:
@@ -283,8 +281,6 @@ class SoakTestRunner:
 
                 # Update review completion count
                 results.reviews_completed = len(processed_deliveries)
-
-                last_verdict_count = current_verdict_count
 
                 await asyncio.sleep(check_interval)
 

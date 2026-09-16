@@ -1,11 +1,10 @@
 """Tests for github/issues.py - GitHub issue creation functionality."""
 
+import httpx
 import pytest
 import respx
-import httpx
-from unittest.mock import AsyncMock
 
-from github.issues import IssueCreator, IssueCreationError
+from github.issues import IssueCreationError, IssueCreator
 from reviewers.verdicts import Finding
 
 
@@ -28,7 +27,7 @@ def sample_findings() -> list[Finding]:
         Finding(
             bucket="bad",
             text="Missing error handling in payment processing flow",
-            severity="WARN", 
+            severity="WARN",
             invariant_id=None,
         ),
         Finding(
@@ -385,7 +384,7 @@ class TestIssueTitleGeneration:
     def test_generate_issue_title_long_text(self, issue_creator: IssueCreator) -> None:
         """Test title generation with long text gets truncated."""
         long_text = "This is a very long finding text that exceeds the maximum title length and should be truncated to fit within reasonable bounds for GitHub issue titles"
-        
+
         finding = Finding(
             bucket="ugly",
             text=long_text,
@@ -436,7 +435,7 @@ class TestIssueBodyGeneration:
         )
 
         body = issue_creator._generate_issue_body(finding, 42, "abc123", "test/repo")
-        
+
         assert "## Finding Details" in body
         assert "**Severity:** WARN" in body
         assert "**Source Bucket:** bad" in body
@@ -458,7 +457,7 @@ class TestIssueBodyGeneration:
         )
 
         body = issue_creator._generate_issue_body(finding, 42, "abc123", "test/repo")
-        
+
         assert "## Invariant Reference" in body
         assert "input_validation" in body
 
@@ -472,5 +471,5 @@ class TestIssueBodyGeneration:
         )
 
         body = issue_creator._generate_issue_body(finding, 42, "abc123", "test/repo")
-        
+
         assert "## Invariant Reference" not in body

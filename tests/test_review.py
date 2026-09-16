@@ -7,7 +7,6 @@ Test coverage for ManualReviewService class including:
 - Integration with review worker
 """
 
-import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -119,7 +118,9 @@ class TestManualReviewService:
             side_effect=WorkerError("Repository not found")
         )
 
-        with pytest.raises(ManualReviewError, match="Manual review failed for invalid/repo PR #123"):
+        with pytest.raises(
+            ManualReviewError, match="Manual review failed for invalid/repo PR #123"
+        ):
             await manual_review_service.review_pr(
                 repo=repo,
                 pr_number=pr_number,
@@ -139,7 +140,9 @@ class TestManualReviewService:
             side_effect=WorkerError("PR not found")
         )
 
-        with pytest.raises(ManualReviewError, match="Manual review failed for owner/test-repo PR #99999"):
+        with pytest.raises(
+            ManualReviewError, match="Manual review failed for owner/test-repo PR #99999"
+        ):
             await manual_review_service.review_pr(
                 repo=repo,
                 pr_number=pr_number,

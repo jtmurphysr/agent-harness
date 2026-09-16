@@ -49,10 +49,19 @@ Have you considered the performance implications of this change?
         result = parser.parse_verdict(raw_response, "engineer")
 
         assert result.reviewer == "engineer"
-        assert result.good == "- Code follows established patterns\n- Tests are included\n- Documentation is comprehensive"
-        assert result.bad == "- Minor style inconsistencies in function names\n- Missing type hints in helper functions"
+        assert (
+            result.good
+            == "- Code follows established patterns\n- Tests are included\n- Documentation is comprehensive"
+        )
+        assert (
+            result.bad
+            == "- Minor style inconsistencies in function names\n- Missing type hints in helper functions"
+        )
         assert result.ugly == "- No major architectural concerns"
-        assert result.closing_question == "Have you considered the performance implications of this change?"
+        assert (
+            result.closing_question
+            == "Have you considered the performance implications of this change?"
+        )
         assert result.severity == "WARN"  # Has issues but not blocking
         assert len(result.findings) == 3
 
@@ -69,7 +78,7 @@ Have you considered the performance implications of this change?
         result = parser.parse_verdict(raw_response, "sre")
 
         assert len(result.findings) == 3
-        
+
         # Check first finding
         auth_finding = next(f for f in result.findings if f.invariant_id == "auth_required")
         assert auth_finding.bucket == "bad"
@@ -96,11 +105,11 @@ Have you considered the performance implications of this change?
         result = parser.parse_verdict(raw_response, "architect")
 
         assert len(result.findings) == 2
-        
+
         # First finding should have null invariant_id
         invalid_finding = next(f for f in result.findings if "nonexistent_rule" in f.text)
         assert invalid_finding.invariant_id is None
-        
+
         # Second finding should have valid invariant_id
         valid_finding = next(f for f in result.findings if "Valid issue" in f.text)
         assert valid_finding.invariant_id == "auth_required"
@@ -156,7 +165,7 @@ Any concerns about deployment timing?
         result = parser.parse_verdict(raw_response, "sre")
 
         assert len(result.findings) == 4
-        
+
         # Check bad findings
         bad_findings = [f for f in result.findings if f.bucket == "bad"]
         assert len(bad_findings) == 2
@@ -174,7 +183,7 @@ Any concerns about deployment timing?
     def test_parse_verdict_malformed_response(self, parser: VerdictParser) -> None:
         """Test handling of malformed responses."""
         malformed_response = "This is not a structured response"
-        
+
         # Should not raise exception, but should handle gracefully
         result = parser.parse_verdict(malformed_response, "engineer")
         assert result.reviewer == "engineer"
@@ -242,7 +251,7 @@ What do you think?
         result = parser.parse_verdict(multiline_response, "engineer")
 
         assert len(result.findings) == 3
-        
+
         # Check multi-line finding
         complex_finding = next(f for f in result.findings if "Complex issue" in f.text)
         expected_text = "Complex issue that spans multiple lines and needs detailed explanation"
@@ -262,14 +271,16 @@ What do you think?
             ("irreversible", "BLOCK"),
             ("critical failure", "BLOCK"),
         ]
-        
+
         for keyword, expected_severity in block_keywords:
             response = f"""
 ## Bad
 - This change causes {keyword}
 """
             result = parser.parse_verdict(response, "sre")
-            assert result.severity == expected_severity, f"Keyword '{keyword}' should trigger {expected_severity}"
+            assert result.severity == expected_severity, (
+                f"Keyword '{keyword}' should trigger {expected_severity}"
+            )
 
     def test_parse_verdict_ugly_block_keywords(self, parser: VerdictParser) -> None:
         """Test BLOCK keywords in ugly section."""
@@ -334,10 +345,7 @@ class TestFinding:
     def test_finding_creation(self) -> None:
         """Test Finding model creation."""
         finding = Finding(
-            bucket="bad",
-            text="Test finding",
-            severity="WARN",
-            invariant_id="test_invariant"
+            bucket="bad", text="Test finding", severity="WARN", invariant_id="test_invariant"
         )
         assert finding.bucket == "bad"
         assert finding.text == "Test finding"
@@ -350,7 +358,7 @@ class TestFinding:
             bucket="ugly",
             text="Test finding without invariant",
             severity="BLOCK",
-            invariant_id=None
+            invariant_id=None,
         )
         assert finding.invariant_id is None
 
@@ -364,7 +372,7 @@ class TestParsedVerdict:
             Finding(bucket="bad", text="Issue 1", severity="WARN", invariant_id=None),
             Finding(bucket="ugly", text="Issue 2", severity="BLOCK", invariant_id="test_id"),
         ]
-        
+
         verdict = ParsedVerdict(
             reviewer="engineer",
             severity="BLOCK",
@@ -372,9 +380,9 @@ class TestParsedVerdict:
             bad="Bad stuff",
             ugly="Ugly stuff",
             closing_question="Question?",
-            findings=findings
+            findings=findings,
         )
-        
+
         assert verdict.reviewer == "engineer"
         assert verdict.severity == "BLOCK"
         assert verdict.good == "Good stuff"

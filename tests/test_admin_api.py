@@ -4,11 +4,8 @@ Comprehensive test suite for all admin API endpoints including
 authentication, pagination, error handling, and data validation.
 """
 
-import sqlite3
 import uuid
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
 from unittest.mock import Mock, patch
 
 import pytest
@@ -54,7 +51,7 @@ def client(test_app: FastAPI) -> TestClient:
 
 
 @pytest.fixture
-def auth_headers() -> Dict[str, str]:
+def auth_headers() -> dict[str, str]:
     """Authentication headers for protected endpoints."""
     return {"Authorization": "Bearer admin-token"}
 
@@ -68,7 +65,9 @@ def sample_project(verdict_store_client: VerdictStoreClient) -> ProjectRecord:
         repo="testorg/testrepo",
         project_name="Test Project",
     )
-    return verdict_store_client.get_project_by_id(project_id)
+    project = verdict_store_client.get_project_by_id(project_id)
+    assert project is not None, "create_project succeeded but get_project_by_id returned None"
+    return project
 
 
 @pytest.fixture
@@ -125,7 +124,7 @@ class TestProjectRegistration:
     """Tests for project registration endpoint."""
 
     def test_register_project_endpoint_success(
-        self, client: TestClient, auth_headers: Dict[str, str]
+        self, client: TestClient, auth_headers: dict[str, str]
     ) -> None:
         """Test successful project registration."""
         stonehaven_id = str(uuid.uuid4())
@@ -158,11 +157,13 @@ class TestProjectRegistration:
 
         # Invalid token
         invalid_headers = {"Authorization": "Bearer invalid-token"}
-        response = client.post("/api/v1/projects/register", json=request_data, headers=invalid_headers)
+        response = client.post(
+            "/api/v1/projects/register", json=request_data, headers=invalid_headers
+        )
         assert response.status_code == 401
 
     def test_register_project_duplicate_repo(
-        self, client: TestClient, auth_headers: Dict[str, str], sample_project: ProjectRecord
+        self, client: TestClient, auth_headers: dict[str, str], sample_project: ProjectRecord
     ) -> None:
         """Test registration with duplicate repository."""
         request_data = {
@@ -172,12 +173,12 @@ class TestProjectRegistration:
         }
 
         response = client.post("/api/v1/projects/register", json=request_data, headers=auth_headers)
-        
+
         assert response.status_code == 409
         assert "already registered" in response.json()["detail"]
 
     def test_register_project_duplicate_stonehaven_id(
-        self, client: TestClient, auth_headers: Dict[str, str], sample_project: ProjectRecord
+        self, client: TestClient, auth_headers: dict[str, str], sample_project: ProjectRecord
     ) -> None:
         """Test registration with duplicate stonehaven_id."""
         request_data = {
@@ -187,12 +188,12 @@ class TestProjectRegistration:
         }
 
         response = client.post("/api/v1/projects/register", json=request_data, headers=auth_headers)
-        
+
         assert response.status_code == 409
         assert "already registered" in response.json()["detail"]
 
     def test_register_project_invalid_uuid(
-        self, client: TestClient, auth_headers: Dict[str, str]
+        self, client: TestClient, auth_headers: dict[str, str]
     ) -> None:
         """Test registration with invalid UUID format."""
         request_data = {
@@ -202,7 +203,7 @@ class TestProjectRegistration:
         }
 
         response = client.post("/api/v1/projects/register", json=request_data, headers=auth_headers)
-        
+
         assert response.status_code == 400
         assert "Invalid UUID4 format" in response.json()["detail"]
 
@@ -210,16 +211,14 @@ class TestProjectRegistration:
 class TestProjectListing:
     """Tests for project listing endpoint."""
 
-    def test_get_projects_endpoint(
-        self, client: TestClient, sample_project: ProjectRecord
-    ) -> None:
+    def test_get_projects_endpoint(self, client: TestClient, sample_project: ProjectRecord) -> None:
         """Test retrieving list of projects."""
         response = client.get("/api/v1/projects")
-        
+
         assert response.status_code == 200
         projects = response.json()
         assert len(projects) >= 1
-        
+
         # Find our sample project
         project = next((p for p in projects if p["id"] == sample_project.id), None)
         assert project is not None
@@ -231,7 +230,7 @@ class TestProjectListing:
     def test_get_projects_empty_list(self, client: TestClient) -> None:
         """Test retrieving projects when none exist."""
         response = client.get("/api/v1/projects")
-        
+
         assert response.status_code == 200
         projects = response.json()
         assert isinstance(projects, list)
@@ -245,11 +244,11 @@ class TestProjectVerdicts:
     ) -> None:
         """Test retrieving project verdicts with pagination."""
         response = client.get(f"/api/v1/projects/{sample_project.id}/verdicts?limit=10&offset=0")
-        
+
         assert response.status_code == 200
         verdicts = response.json()
         assert len(verdicts) >= 1
-        
+
         verdict = verdicts[0]
         assert verdict["id"] == sample_verdict.id
         assert verdict["delivery_id"] == sample_verdict.delivery_id
@@ -276,7 +275,7 @@ class TestProjectVerdicts:
     def test_get_project_verdicts_nonexistent_project(self, client: TestClient) -> None:
         """Test retrieving verdicts for nonexistent project."""
         response = client.get("/api/v1/projects/99999/verdicts")
-        
+
         assert response.status_code == 200
         verdicts = response.json()
         assert len(verdicts) == 0
@@ -286,18 +285,18 @@ class TestProjectStats:
     """Tests for project statistics endpoint."""
 
     def test_get_project_stats(
-        self, 
-        client: TestClient, 
-        sample_project: ProjectRecord, 
+        self,
+        client: TestClient,
+        sample_project: ProjectRecord,
         sample_verdict: VerdictRecord,
-        sample_findings: list[FindingRecord]
+        sample_findings: list[FindingRecord],
     ) -> None:
         """Test retrieving project statistics."""
         response = client.get(f"/api/v1/projects/{sample_project.id}/stats")
-        
+
         assert response.status_code == 200
         stats = response.json()
-        
+
         assert stats["project_id"] == sample_project.id
         assert stats["total_verdicts"] >= 1
         assert stats["warn_count"] >= 1  # Our sample verdict is WARN
@@ -308,7 +307,7 @@ class TestProjectStats:
     def test_get_project_stats_nonexistent_project(self, client: TestClient) -> None:
         """Test stats for nonexistent project."""
         response = client.get("/api/v1/projects/99999/stats")
-        
+
         assert response.status_code == 200
         stats = response.json()
         assert stats["total_verdicts"] == 0
@@ -326,10 +325,10 @@ class TestFleetStats:
     ) -> None:
         """Test retrieving fleet-wide statistics."""
         response = client.get("/api/v1/fleet/stats")
-        
+
         assert response.status_code == 200
         stats = response.json()
-        
+
         assert stats["total_projects"] >= 1
         assert stats["active_projects"] >= 1
         assert stats["total_verdicts"] >= 1
@@ -341,7 +340,7 @@ class TestFleetStats:
     def test_get_fleet_stats_empty_fleet(self, client: TestClient) -> None:
         """Test fleet stats with empty database."""
         response = client.get("/api/v1/fleet/stats")
-        
+
         assert response.status_code == 200
         stats = response.json()
         assert stats["total_projects"] == 0
@@ -376,8 +375,7 @@ class TestFleetFindings:
         assert response.status_code == 200
         findings = response.json()
         assert all(
-            finding["bucket"] == "bad" and finding["severity"] == "BLOCK" 
-            for finding in findings
+            finding["bucket"] == "bad" and finding["severity"] == "BLOCK" for finding in findings
         )
 
     def test_get_fleet_findings_pagination(
@@ -411,10 +409,10 @@ class TestInvariantFindings:
     ) -> None:
         """Test retrieving findings for a specific invariant."""
         invariant_id = "sec_001"
-        
+
         response = client.get(f"/api/v1/fleet/invariants/{invariant_id}/findings")
         assert response.status_code == 200
-        
+
         findings = response.json()
         assert all(finding["invariant_id"] == invariant_id for finding in findings)
 
@@ -422,7 +420,7 @@ class TestInvariantFindings:
         """Test retrieving findings for nonexistent invariant."""
         response = client.get("/api/v1/fleet/invariants/nonexistent/findings")
         assert response.status_code == 200
-        
+
         findings = response.json()
         assert len(findings) == 0
 
@@ -440,10 +438,10 @@ class TestInvariantCoverage:
         """Test retrieving invariant coverage statistics."""
         response = client.get("/api/v1/fleet/invariants/coverage")
         assert response.status_code == 200
-        
+
         coverage = response.json()
         assert isinstance(coverage, list)
-        
+
         if coverage:  # If we have coverage data
             item = coverage[0]
             assert "invariant_id" in item
@@ -458,7 +456,7 @@ class TestInvariantCoverage:
         """Test invariant coverage with no data."""
         response = client.get("/api/v1/fleet/invariants/coverage")
         assert response.status_code == 200
-        
+
         coverage = response.json()
         assert isinstance(coverage, list)
 
@@ -468,24 +466,22 @@ class TestErrorHandling:
 
     @patch("stonehaven.registry.ProjectRegistry.register_project")
     def test_registration_database_error(
-        self, mock_register: Mock, client: TestClient, auth_headers: Dict[str, str]
+        self, mock_register: Mock, client: TestClient, auth_headers: dict[str, str]
     ) -> None:
         """Test handling of database errors during registration."""
         mock_register.side_effect = RegistrationError("Database connection failed")
-        
+
         request_data = {
             "stonehaven_id": str(uuid.uuid4()),
             "repo": "testorg/dberror",
             "project_name": "DB Error Project",
         }
-        
+
         response = client.post("/api/v1/projects/register", json=request_data, headers=auth_headers)
         assert response.status_code == 400
         assert "Database connection failed" in response.json()["detail"]
 
-    def test_malformed_request_data(
-        self, client: TestClient, auth_headers: Dict[str, str]
-    ) -> None:
+    def test_malformed_request_data(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test handling of malformed request data."""
         # Missing required field
         request_data = {
@@ -493,11 +489,11 @@ class TestErrorHandling:
             "repo": "testorg/incomplete",
             # Missing project_name
         }
-        
+
         response = client.post("/api/v1/projects/register", json=request_data, headers=auth_headers)
         assert response.status_code == 422
 
-    def test_invalid_json(self, client: TestClient, auth_headers: Dict[str, str]) -> None:
+    def test_invalid_json(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test handling of invalid JSON in request."""
         response = client.post(
             "/api/v1/projects/register",
@@ -517,7 +513,7 @@ class TestSecurityFeatures:
         # Get project details
         response = client.get("/api/v1/projects")
         assert response.status_code == 200
-        
+
         projects = response.json()
         for project in projects:
             # Check that no field contains secret-like information
@@ -534,12 +530,12 @@ class TestSecurityFeatures:
             "repo": "testorg/tokentest",
             "project_name": "Token Test Project",
         }
-        
+
         # Empty token
         headers = {"Authorization": "Bearer "}
         response = client.post("/api/v1/projects/register", json=request_data, headers=headers)
         assert response.status_code == 401
-        
+
         # Malformed authorization header
         headers = {"Authorization": "NotBearer admin-token"}
         response = client.post("/api/v1/projects/register", json=request_data, headers=headers)

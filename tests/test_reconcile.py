@@ -8,8 +8,7 @@ Test coverage for ReconciliationService class including:
 """
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -67,7 +66,7 @@ def sample_project():
         stonehaven_id="test-uuid-1234",
         repo="owner/test-repo",
         project_name="Test Project",
-        registered_at=datetime.now(timezone.utc),
+        registered_at=datetime.now(UTC),
         harness_version="1.0.0",
         active=True,
     )
@@ -76,7 +75,7 @@ def sample_project():
 @pytest.fixture
 def sample_merged_prs():
     """Sample merged PR data for testing."""
-    base_time = datetime.now(timezone.utc)
+    base_time = datetime.now(UTC)
     return [
         {
             "number": 123,
@@ -119,16 +118,17 @@ class TestReconciliationService:
         self, reconciliation_service, sample_project, sample_merged_prs
     ):
         """Test reconciliation when PRs have missing verdicts."""
-        timestamp = datetime.now(timezone.utc) - timedelta(hours=4)
+        timestamp = datetime.now(UTC) - timedelta(hours=4)
         repo = "owner/test-repo"
 
         # Mock registry behavior
         reconciliation_service.registry.get_project.return_value = sample_project
 
         # Mock PR client behavior
-        with patch.object(reconciliation_service, '_get_merged_prs_since') as mock_get_prs, \
-             patch.object(reconciliation_service, '_has_verdict') as mock_has_verdict:
-
+        with (
+            patch.object(reconciliation_service, "_get_merged_prs_since") as mock_get_prs,
+            patch.object(reconciliation_service, "_has_verdict") as mock_has_verdict,
+        ):
             mock_get_prs.return_value = sample_merged_prs
             # First PR has verdict, others don't
             mock_has_verdict.side_effect = [True, False, False]
@@ -152,16 +152,17 @@ class TestReconciliationService:
         self, reconciliation_service, sample_project, sample_merged_prs
     ):
         """Test reconciliation when all PRs already have verdicts."""
-        timestamp = datetime.now(timezone.utc) - timedelta(hours=4)
+        timestamp = datetime.now(UTC) - timedelta(hours=4)
         repo = "owner/test-repo"
 
         # Mock registry behavior
         reconciliation_service.registry.get_project.return_value = sample_project
 
         # Mock PR client behavior
-        with patch.object(reconciliation_service, '_get_merged_prs_since') as mock_get_prs, \
-             patch.object(reconciliation_service, '_has_verdict') as mock_has_verdict:
-
+        with (
+            patch.object(reconciliation_service, "_get_merged_prs_since") as mock_get_prs,
+            patch.object(reconciliation_service, "_has_verdict") as mock_has_verdict,
+        ):
             mock_get_prs.return_value = sample_merged_prs
             # All PRs have verdicts
             mock_has_verdict.return_value = True
@@ -185,13 +186,13 @@ class TestReconciliationService:
         self, reconciliation_service, sample_project, sample_merged_prs
     ):
         """Test reconciliation targeting a specific repository."""
-        timestamp = datetime.now(timezone.utc) - timedelta(hours=4)
+        timestamp = datetime.now(UTC) - timedelta(hours=4)
         repo = "owner/test-repo"
 
         # Mock registry behavior
         reconciliation_service.registry.get_project.return_value = sample_project
 
-        with patch.object(reconciliation_service, '_reconcile_repo') as mock_reconcile_repo:
+        with patch.object(reconciliation_service, "_reconcile_repo") as mock_reconcile_repo:
             mock_reconcile_repo.return_value = {
                 "total_prs_checked": 2,
                 "missing_verdicts": 1,
@@ -209,12 +210,13 @@ class TestReconciliationService:
     @pytest.mark.asyncio
     async def test_reconcile_since_all_projects(self, reconciliation_service):
         """Test fleet-wide reconciliation across all registered projects."""
-        timestamp = datetime.now(timezone.utc) - timedelta(hours=4)
+        timestamp = datetime.now(UTC) - timedelta(hours=4)
         repos = ["owner/repo1", "owner/repo2"]
 
-        with patch.object(reconciliation_service, '_get_all_registered_repos') as mock_get_repos, \
-             patch.object(reconciliation_service, '_reconcile_repo') as mock_reconcile_repo:
-
+        with (
+            patch.object(reconciliation_service, "_get_all_registered_repos") as mock_get_repos,
+            patch.object(reconciliation_service, "_reconcile_repo") as mock_reconcile_repo,
+        ):
             mock_get_repos.return_value = repos
             mock_reconcile_repo.side_effect = [
                 {
@@ -243,7 +245,7 @@ class TestReconciliationService:
     @pytest.mark.asyncio
     async def test_reconcile_since_error_handling(self, reconciliation_service):
         """Test error handling during reconciliation."""
-        timestamp = datetime.now(timezone.utc) - timedelta(hours=4)
+        timestamp = datetime.now(UTC) - timedelta(hours=4)
         repo = "owner/test-repo"
 
         # Mock registry to raise error
@@ -257,12 +259,13 @@ class TestReconciliationService:
         self, reconciliation_service, sample_project, sample_merged_prs
     ):
         """Test repository reconciliation handling review worker failures."""
-        timestamp = datetime.now(timezone.utc) - timedelta(hours=4)
+        timestamp = datetime.now(UTC) - timedelta(hours=4)
         repo = "owner/test-repo"
 
-        with patch.object(reconciliation_service, '_get_merged_prs_since') as mock_get_prs, \
-             patch.object(reconciliation_service, '_has_verdict') as mock_has_verdict:
-
+        with (
+            patch.object(reconciliation_service, "_get_merged_prs_since") as mock_get_prs,
+            patch.object(reconciliation_service, "_has_verdict") as mock_has_verdict,
+        ):
             mock_get_prs.return_value = sample_merged_prs
             # All PRs missing verdicts
             mock_has_verdict.return_value = False
@@ -286,13 +289,15 @@ class TestReconciliationService:
     async def test_get_merged_prs_since(self, reconciliation_service):
         """Test fetching merged PRs since timestamp."""
         repo = "owner/test-repo"
-        timestamp = datetime.now(timezone.utc) - timedelta(hours=4)
+        timestamp = datetime.now(UTC) - timedelta(hours=4)
 
         # Mock PR response data
         pr_data = [
             {
                 "number": 123,
-                "merged_at": (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "merged_at": (datetime.now(UTC) - timedelta(hours=1)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
                 "title": "Test PR",
                 "head": {"sha": "abc123"},
             }
@@ -313,7 +318,7 @@ class TestReconciliationService:
     async def test_get_merged_prs_since_api_error(self, reconciliation_service):
         """Test handling GitHub API errors when fetching PRs."""
         repo = "owner/test-repo"
-        timestamp = datetime.now(timezone.utc) - timedelta(hours=4)
+        timestamp = datetime.now(UTC) - timedelta(hours=4)
 
         # Mock API error
         reconciliation_service.pr_client._request_with_retry = AsyncMock(
@@ -333,7 +338,7 @@ class TestReconciliationService:
         reconciliation_service.registry.get_project.return_value = sample_project
 
         # Mock database query
-        with patch('sqlite3.connect') as mock_connect:
+        with patch("sqlite3.connect") as mock_connect:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = [1]  # Count > 0
@@ -354,7 +359,7 @@ class TestReconciliationService:
         reconciliation_service.registry.get_project.return_value = sample_project
 
         # Mock database query
-        with patch('sqlite3.connect') as mock_connect:
+        with patch("sqlite3.connect") as mock_connect:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = [0]  # Count = 0
@@ -375,7 +380,7 @@ class TestReconciliationService:
         reconciliation_service.registry.get_project.return_value = sample_project
 
         # Mock database error
-        with patch('sqlite3.connect') as mock_connect:
+        with patch("sqlite3.connect") as mock_connect:
             mock_connect.side_effect = sqlite3.Error("Database locked")
 
             with pytest.raises(ReconcileError, match="Database error checking verdicts"):
@@ -387,7 +392,7 @@ class TestReconciliationService:
         expected_repos = ["owner/repo1", "owner/repo2", "owner/repo3"]
 
         # Mock database query
-        with patch('sqlite3.connect') as mock_connect:
+        with patch("sqlite3.connect") as mock_connect:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_cursor.fetchall.return_value = [(repo,) for repo in expected_repos]
@@ -402,7 +407,7 @@ class TestReconciliationService:
     async def test_get_all_registered_repos_database_error(self, reconciliation_service):
         """Test handling database errors when fetching registered repos."""
         # Mock database error
-        with patch('sqlite3.connect') as mock_connect:
+        with patch("sqlite3.connect") as mock_connect:
             mock_connect.side_effect = sqlite3.Error("Connection failed")
 
             with pytest.raises(ReconcileError, match="Database error fetching registered repos"):
@@ -411,13 +416,13 @@ class TestReconciliationService:
     @pytest.mark.asyncio
     async def test_reconcile_since_unregistered_repo(self, reconciliation_service):
         """Test reconciliation error for unregistered repository."""
-        timestamp = datetime.now(timezone.utc) - timedelta(hours=4)
+        timestamp = datetime.now(UTC) - timedelta(hours=4)
         repo = "owner/unregistered-repo"
 
         # Mock registry to return None for unregistered repo
         reconciliation_service.registry.get_project.return_value = None
 
-        with pytest.raises(ReconcileError, match="Repository .* is not registered"):
+        with pytest.raises(ReconcileError, match=r"Repository .* is not registered"):
             await reconciliation_service.reconcile_since(timestamp, repo)
 
     @pytest.mark.asyncio
@@ -425,15 +430,16 @@ class TestReconciliationService:
         self, reconciliation_service, sample_project, sample_merged_prs
     ):
         """Test that synthetic delivery IDs are generated correctly for reconciliation."""
-        timestamp = datetime.now(timezone.utc) - timedelta(hours=4)
+        timestamp = datetime.now(UTC) - timedelta(hours=4)
         repo = "owner/test-repo"
 
         # Mock registry behavior
         reconciliation_service.registry.get_project.return_value = sample_project
 
-        with patch.object(reconciliation_service, '_get_merged_prs_since') as mock_get_prs, \
-             patch.object(reconciliation_service, '_has_verdict') as mock_has_verdict:
-
+        with (
+            patch.object(reconciliation_service, "_get_merged_prs_since") as mock_get_prs,
+            patch.object(reconciliation_service, "_has_verdict") as mock_has_verdict,
+        ):
             mock_get_prs.return_value = [sample_merged_prs[0]]  # Single PR
             mock_has_verdict.return_value = False  # Missing verdict
 
@@ -445,7 +451,9 @@ class TestReconciliationService:
             # Verify delivery ID format
             call_args = reconciliation_service.worker.process_review.call_args[1]
             delivery_id = call_args["delivery_id"]
-            expected_prefix = f"reconcile-{repo.replace('/', '-')}-{sample_merged_prs[0]['number']}-"
+            expected_prefix = (
+                f"reconcile-{repo.replace('/', '-')}-{sample_merged_prs[0]['number']}-"
+            )
             assert delivery_id.startswith(expected_prefix)
             assert call_args["repo"] == repo
             assert call_args["pr_number"] == sample_merged_prs[0]["number"]

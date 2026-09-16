@@ -1,6 +1,5 @@
 """Tests for renderer/compose.py."""
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -33,18 +32,12 @@ propagation: opt_in
 
         # Create context data
         context_data = {
-            "project": {
-                "name": "test-project",
-                "description": "A test project"
-            },
-            "stack": {
-                "language": "Python",
-                "framework": "FastAPI"
-            },
+            "project": {"name": "test-project", "description": "A test project"},
+            "stack": {"language": "Python", "framework": "FastAPI"},
             "invariants": [
                 {"id": "auth_required", "rule": "All endpoints need auth"},
-                {"id": "validate_input", "rule": "Validate all inputs"}
-            ]
+                {"id": "validate_input", "rule": "Validate all inputs"},
+            ],
         }
 
         # Create output path
@@ -58,12 +51,12 @@ propagation: opt_in
 
         # Read and verify content
         content = output_file.read_text(encoding="utf-8")
-        
+
         # Check generation header
         assert "<!-- GENERATED FILE — DO NOT EDIT -->" in content
         assert "test.template.md v1.2.3 + project_context.md" in content
         assert "harness render" in content
-        
+
         # Check rendered content
         assert "# test-project Review" in content
         assert "**Description:** A test project" in content
@@ -76,7 +69,7 @@ propagation: opt_in
         nonexistent_template = tmp_path / "nonexistent.template.md"
         context_data = {"project": {"name": "test"}}
         output_file = tmp_path / "output.md"
-        
+
         with pytest.raises(CompositionError, match="Template file not found"):
             compose_agent(nonexistent_template, context_data, output_file)
 
@@ -94,7 +87,7 @@ version: "1.0.0"
 
         context_data = {"project": {"name": "test"}}
         output_file = tmp_path / "output.md"
-        
+
         with pytest.raises(CompositionError, match="Template rendering failed"):
             compose_agent(template_file, context_data, output_file)
 
@@ -113,7 +106,7 @@ Undefined: {{ missing_variable }}
 
         context_data = {"project": {"name": "test"}}
         output_file = tmp_path / "output.md"
-        
+
         with pytest.raises(CompositionError, match="Template rendering failed"):
             compose_agent(template_file, context_data, output_file)
 
@@ -129,12 +122,12 @@ Simple template content.
 
         context_data = {}
         output_file = tmp_path / "output.md"
-        
+
         compose_agent(template_file, context_data, output_file)
-        
+
         content = output_file.read_text(encoding="utf-8")
-        lines = content.split('\n')
-        
+        lines = content.split("\n")
+
         # Verify header format
         assert lines[0] == "<!-- GENERATED FILE — DO NOT EDIT -->"
         assert "simple.template.md v2.1.0 + project_context.md" in lines[1]
@@ -155,9 +148,9 @@ Template content here.
 
         context_data = {}
         output_file = tmp_path / "output.md"
-        
+
         compose_agent(template_file, context_data, output_file)
-        
+
         content = output_file.read_text(encoding="utf-8")
         assert "versioned.template.md v3.14.159 + project_context.md" in content
 
@@ -168,7 +161,7 @@ Template content here.
 
         context_data = {}
         output_file = tmp_path / "output.md"
-        
+
         with pytest.raises(CompositionError, match="No YAML frontmatter found in template"):
             compose_agent(template_file, context_data, output_file)
 
@@ -185,7 +178,7 @@ Template content.
 
         context_data = {}
         output_file = tmp_path / "output.md"
-        
+
         with pytest.raises(CompositionError, match="No version found in template frontmatter"):
             compose_agent(template_file, context_data, output_file)
 
@@ -202,9 +195,9 @@ Content.
         context_data = {}
         # Output file in nested directory that doesn't exist
         output_file = tmp_path / "nested" / "deep" / "output.md"
-        
+
         compose_agent(template_file, context_data, output_file)
-        
+
         assert output_file.exists()
         assert output_file.parent.exists()
 
@@ -231,9 +224,9 @@ Project: {{ project.name }}
 
         context_data = {"project": {"name": "test-project"}}
         output_file = tmp_path / "output.md"
-        
+
         compose_agent(template_file, context_data, output_file)
-        
+
         content = output_file.read_text(encoding="utf-8")
         assert "Shared content from partial." in content
         assert "Project: test-project" in content
@@ -247,9 +240,12 @@ Project: {{ project.name }}
             ('version: "1.0.0-beta"', "1.0.0-beta"),
             ("version: 2.1", "2.1"),
         ]
-        
+
         for frontmatter_version, expected_version in test_cases:
-            template_file = tmp_path / f"version_test_{expected_version.replace('.', '_').replace('-', '_')}.template.md"
+            template_file = (
+                tmp_path
+                / f"version_test_{expected_version.replace('.', '_').replace('-', '_')}.template.md"
+            )
             template_file.write_text(f"""---
 {frontmatter_version}
 ---
@@ -258,10 +254,12 @@ Content.
 """)
 
             context_data = {}
-            output_file = tmp_path / f"output_{expected_version.replace('.', '_').replace('-', '_')}.md"
-            
+            output_file = (
+                tmp_path / f"output_{expected_version.replace('.', '_').replace('-', '_')}.md"
+            )
+
             compose_agent(template_file, context_data, output_file)
-            
+
             content = output_file.read_text(encoding="utf-8")
             assert f"v{expected_version} + project_context.md" in content
 
@@ -274,13 +272,13 @@ version: "1.0.0"
 
 Content.
 """)
-        
+
         # Make file unreadable (this might not work on all systems)
         template_file.chmod(0o000)
-        
+
         context_data = {}
         output_file = tmp_path / "output.md"
-        
+
         try:
             with pytest.raises(CompositionError, match="Failed to read template file"):
                 compose_agent(template_file, context_data, output_file)
@@ -297,12 +295,12 @@ version: "1.0.0"
 
 Content.
 """)
-        
+
         context_data = {}
-        
+
         # Try to write to a directory instead of a file
         output_file = tmp_path / "directory_not_file"
         output_file.mkdir()
-        
+
         with pytest.raises(CompositionError, match="Failed to write output file"):
             compose_agent(template_file, context_data, output_file)

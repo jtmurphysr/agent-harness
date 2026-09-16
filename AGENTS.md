@@ -219,9 +219,15 @@ If not, wait. Do not start work on a dependent module before its dependency exis
 
 ### Python Style
 - Python 3.11+ — use `match`, `|` union types, `tomllib`, etc. where appropriate
-- Type hints on **all** function signatures — no exceptions
+- Type hints on **all** function signatures — no exceptions in source. **Known waiver:**
+  `tests/` is under a mypy ratchet (`[[tool.mypy.overrides]]` in `pyproject.toml`) that
+  waives untyped test signatures and a named list of error codes while the existing debt
+  is paid down. New test code should still be fully typed; the waiver keeps CI green, it
+  does not make the debt acceptable. Removing a code from that list is how the check
+  comes back on. Tracked in the follow-up to #12.
 - Pydantic v2 for all data models in `models.py`
-- `ruff` for linting and formatting
+- `ruff` for linting and formatting — **every** directory, including `tests/` and
+  `scripts/`. There is no excluded tree. (There was, silently, until #12.)
 - `mypy --strict` — no `type: ignore` without an inline comment explaining why
 
 ### Async
