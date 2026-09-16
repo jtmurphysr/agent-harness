@@ -74,11 +74,14 @@ jobs:
           echo "touches_workflows=true" >> "$GITHUB_OUTPUT"
           echo "Workflow files changed:"; printf '  %s\n' $hits
           # Idempotent: re-runs on the same PR must not stack comments.
-          if gh pr view "$PR" --repo "${{ github.repository }}" --json labels -q '.labels[].name' | grep -qx 'human-review'; then
+          # REST, not `gh pr view --json`: that goes through GraphQL and needs
+          # read:org, which GH_PAT deliberately does not have. Learned on the
+          # guard's own first run -- detection worked, this check errored.
+          if gh api "repos/${{ github.repository }}/issues/$PR/labels" -q '.[].name' | grep -qx 'human-review'; then
             echo "human-review already present."
             exit 0
           fi
-          gh pr edit "$PR" --repo "${{ github.repository }}" --add-label "human-review"
+          gh api -X POST "repos/${{ github.repository }}/issues/$PR/labels" -f 'labels[]=human-review' >/dev/null
           # Build the comment in a file: a heredoc inside a YAML block scalar has to
           # stay indented, and markdown bold at column 0 reads as a YAML alias.
           {
@@ -90,7 +93,8 @@ jobs:
             echo
             echo 'Review the workflow diff specifically for: auto-merge conditions, the sequential gate, secrets usage, and the `workflow-guard` job itself.'
           } > "$RUNNER_TEMP/guard-comment.md"
-          gh pr comment "$PR" --repo "${{ github.repository }}" --body-file "$RUNNER_TEMP/guard-comment.md"
+          gh api -X POST "repos/${{ github.repository }}/issues/$PR/comments" \
+            -F body=@"$RUNNER_TEMP/guard-comment.md" >/dev/null
           echo "::warning::Workflow files changed — human-review applied, auto-merge disabled for this PR."
 
   harness-lint:
