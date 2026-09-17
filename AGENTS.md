@@ -140,7 +140,11 @@ Do not rely on catching a "duplicate" error — not all APIs return one reliably
 
 ## Harness Lessons — Read Before Writing Any Code
 
-These were discovered during initial bootstrap. They will burn you if ignored.
+Lessons 1–3 were discovered during initial bootstrap. Lessons 4–13 were learned
+the expensive way in `jtmurphysr/elp-mosaic` across 41 agent-authored PRs and
+distilled here as rules; the case histories stay in that repo's `docs/learnings/`.
+A rule in this section is current law. If a lesson's cause is fixed and the rule
+no longer binds, delete it — this section is not an archive.
 
 ### ⚠️ LESSON 1: Always run `ruff format .` — not just `ruff check .`
 
@@ -164,6 +168,8 @@ gh pr create \
   --head $(git branch --show-current) \
   --label "agent-task"
 ```
+`Closes #N` here is **your own issue** and nothing else. See LESSON 5 before
+writing a closing keyword against any other issue number.
 
 ### ⚠️ LESSON 3: `pyproject.toml` — use exact validated structure
 
@@ -177,6 +183,123 @@ Key invariants:
 - `py-modules` is a **flat array** under `[tool.setuptools]` — not a table
 - `packages` is a **flat array** under `[tool.setuptools]` — not a find directive
 - `pythonpath = ["."]` is required in `[tool.pytest.ini_options]` for flat layout imports
+
+### ⚠️ LESSON 4: Out-of-scope findings — check first, then file, never defer
+
+If you find a real defect outside your issue's scope, do not fix it in your PR
+and do not leave it only in a PR comment. Auto-merge means no human reads the
+PR between open and merge; a finding that lives only there is lost.
+
+1. **Search before filing.** `gh issue list --search "<file or symbol>" --state open`.
+   If it is already on file, comment there with what you saw and move on.
+2. If it is new, open it labelled `human-review`, and cite the number in your PR body.
+
+Five agents in one generated project filed the same `.venv` finding five times
+because step 1 did not exist. Do step 1.
+
+### ⚠️ LESSON 5: A closing keyword is an executable instruction
+
+Under auto-merge, GitHub acts on `Closes #N` unreviewed and the issue leaves the
+dispatch queue permanently. Reopening it does not restore its place in the chain.
+
+- Write `Closes #N` **only for the issue you were dispatched on.**
+- For any other issue your PR advances, **read its current comments first** —
+  issues are re-scoped while a chain is in flight — and write `Refs #N` with a
+  sentence on what remains.
+- **Writing *about* the keyword executes it.** GitHub scans the whole body;
+  backticks, quotation marks and negation do not exempt it. Say "the closing
+  keyword for #N", never the keyword itself.
+- `close-issue-on-merge.yml` matches only the **first** `Closes #N` and uses that
+  number to compute the next dispatch. A stray keyword above your own line
+  reroutes the chain.
+
+### ⚠️ LESSON 6: When the issue spec and reality disagree, here is who wins
+
+Issue specs are written before the code runs. Three kinds of conflict, three rules:
+
+- **INTERFACE CONTRACT vs REQUIRED TESTS → the tests win.** The contract is
+  illustrative; the tests are executable. Keep the specified test name, change
+  the mechanism to one that actually reaches the target line.
+- **INTERFACE CONTRACT vs OUT OF SCOPE prose → the contract wins.** The prose
+  summarises the pre-change state, usually written first; the contract is the
+  prescription.
+- **Any premise about what `main` currently looks like → unverified until you
+  check it.** "Stays as it is", "unchanged from", "as today" — `grep` it against
+  your branch point before treating it as a constraint. A false prescription
+  fails loudly; a false premise is inert and you ship the wrong thing green.
+
+Never assert defective behaviour as the contract. If the only way to reach a line
+is through a bug, cover it with `@pytest.mark.xfail(strict=True)` naming the
+issue, and assert the **correct** contract — the eventual fix then fails via
+XPASS, which is the signal to drop the marker. Declare every such resolution in a
+named PR-body section.
+
+### ⚠️ LESSON 7: An aggregate coverage number proves nothing about any one file
+
+`--cov-fail-under` gates the total. A module can sit at 0% under a green total.
+And `coverage report` rounds to integer percent, so `84.69%` prints as `85%` —
+the sub-floor band is invisible at default precision.
+
+- Per-file floors are enforced by `scripts/check_coverage_floor.py` (2dp, raw
+  float comparison), not by the total.
+- Confirm any figure near the floor with `coverage report --precision=2`.
+- A COVERAGE REQUIREMENTS floor *above* the module's current figure is a hidden
+  test requirement: the named tests are not sufficient by construction. Measure
+  first, then write.
+
+### ⚠️ LESSON 8: `asyncio.run()` inside a test deadlocks silently
+
+`asyncio_mode = "auto"` is set. Never call `asyncio.run()` in a test — it hangs
+CI at a fixed percentage forever with no error. Use `async def` (pytest-asyncio
+owns the loop) or the synchronous `TestClient`. No exceptions.
+
+### ⚠️ LESSON 9: `client.get()` on a streaming endpoint never returns
+
+Any route that returns `StreamingResponse` blocks a plain `client.get()` until
+the stream closes — which for a heartbeat loop is never. Use
+`client.stream("GET", path)` as a context manager. If the endpoint has a
+heartbeat, disable it via its env var with `monkeypatch.setenv()` first.
+
+The same hazard applies to **middleware**: anything that consumes
+`response.body_iterator` must exempt streaming endpoints, or the request hangs.
+The hang presents as a dead endpoint, not a failing test.
+
+### ⚠️ LESSON 10: Asserting on a field that has a default proves nothing
+
+If a response model declares `voice: str = "mosaic"`, then
+`assert body["voice"] == "mosaic"` passes with the enforcement code deleted.
+It tests the default, not the mechanism. Assert on something the mechanism
+*adds* and nothing defaults — a block, a header, a computed field. To test the
+enforcer in isolation, drive a route that omits the field entirely.
+
+This is Governing Principle 2 applied to tests: coverage proves the code runs,
+not that it enforces.
+
+### ⚠️ LESSON 11: Forbid a duplicated helper with a test, not a comment
+
+When one function must be the only implementation of something (a parser, a
+validator, a client), add a test that reads the candidate modules with
+`inspect.getsource` and fails if the forbidden name or call reappears. A comment
+saying "do not duplicate this" is read once; the test is run every PR. Five
+copies of one timestamp parser shipped in a generated project before the test
+existed; none since.
+
+### ⚠️ LESSON 12: "0 commits, no PR" is not proof the cycle failed
+
+The dispatch workflow's empty-branch guard runs *after* the agent step and cannot
+distinguish "nothing committed" from "already merged." It has posted that comment
+seconds after a green merge, with a re-dispatch instruction that would redo
+merged work. **Before acting on it, check for a merged PR whose head was that
+branch.** Red dispatch runs with green merges behind them make dispatch health
+unreadable; do not add to the noise.
+
+### ⚠️ LESSON 13: Lint every tree, or say exactly which you do not
+
+`[tool.ruff] exclude` **replaces** ruff's defaults — use `extend-exclude`. And a
+test-only PR whose test directory is excluded passes every pre-PR step without
+its one changed file being read. This template now lints `tests/` and `scripts/`.
+If a project ever excludes a tree, AGENTS.md must name it and say why; "no
+exceptions" with a silent exception is the defect, not the policy.
 
 ---
 
