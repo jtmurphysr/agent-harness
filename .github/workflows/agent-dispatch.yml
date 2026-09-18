@@ -33,6 +33,48 @@ jobs:
         run: |
           git config --global user.name "claude-agent[bot]"
           git config --global user.email "claude-agent[bot]@users.noreply.github.com"
+      # close-issue-on-merge.yml dispatches this job from the SAME merge event that
+      # starts compound-learning.yml, so the previous cycle's AGENTS.md edits land on
+      # main seconds AFTER the next branch is cut. Measured downstream at twelve
+      # seconds: the next agent read a constitution without the warning the previous
+      # cycle had just written, and shipped the exact defect it warned about (#13).
+      #
+      # Two deliberate properties, both load-bearing:
+      #   1. The wait is capped at 10 minutes (30 checks x 20s).
+      #   2. On timeout it WARNS and proceeds -- it does not fail. A hung or
+      #      long-running manual learning job must not permanently block the
+      #      pipeline. `gh run list --workflow` returns runs across all branches,
+      #      which is what we want (the learning job runs on main) but also means a
+      #      manual invocation can hold dispatch for the full cap. Warn-and-proceed
+      #      is the safety valve; do not turn it into a hard failure.
+      - name: Wait for compound-learning to land
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          for i in $(seq 1 30); do
+            RUNNING=$(gh run list --repo ${{ github.repository }} \
+              --workflow compound-learning.yml --status in_progress \
+              --json databaseId --jq 'length')
+            QUEUED=$(gh run list --repo ${{ github.repository }} \
+              --workflow compound-learning.yml --status queued \
+              --json databaseId --jq 'length')
+            if [ "$RUNNING" = "0" ] && [ "$QUEUED" = "0" ]; then
+              echo "compound-learning idle after ${i} checks."
+              exit 0
+            fi
+            echo "compound-learning busy (in_progress=$RUNNING queued=$QUEUED) — waiting 20s"
+            sleep 20
+          done
+          echo "::warning::compound-learning still running after 10 minutes — proceeding."
+      # The checkout above predates the wait, so it predates whatever
+      # compound-learning just pushed. Re-point it at current main so the agent reads
+      # the AGENTS.md that exists now rather than the one from the merge event (#13).
+      #
+      # `git checkout origin/main --detach` DISCARDS the working tree. It is safe only
+      # here: after the wait, before the agent writes any file and before the branch is
+      # cut. Moving it later would silently destroy the agent's work.
+      - name: Refresh main
+        run: git fetch origin main && git checkout origin/main --detach
       - name: Check sequential dependency
         id: dep-check
         env:
@@ -264,6 +306,23 @@ jobs:
               console.log('No agent branch found — skipping empty-branch guard.');
               return;
             }
+            // ahead_by === 0 against live main cannot distinguish "the agent committed
+            // nothing" from "the agent's PR already merged." Downstream this fired
+            // sixteen seconds after a green merge, posted a re-dispatch instruction
+            // that would have redone merged work, and failed a run that had shipped.
+            // Check for a merged PR with this head FIRST (#140).
+            const merged = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'closed',
+              head: `${context.repo.owner}:${issueBranch.name}`,
+              per_page: 5,
+            });
+            const mergedPr = merged.data.find(pr => pr.merged_at);
+            if (mergedPr) {
+              console.log(`Branch ${issueBranch.name} was merged as PR #${mergedPr.number} at ${mergedPr.merged_at} — cycle complete, not empty.`);
+              return;
+            }
             const compare = await github.rest.repos.compareCommitsWithBasehead({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -392,6 +451,48 @@ jobs:
         run: |
           git config --global user.name "claude-agent[bot]"
           git config --global user.email "claude-agent[bot]@users.noreply.github.com"
+      # close-issue-on-merge.yml dispatches this job from the SAME merge event that
+      # starts compound-learning.yml, so the previous cycle's AGENTS.md edits land on
+      # main seconds AFTER the next branch is cut. Measured downstream at twelve
+      # seconds: the next agent read a constitution without the warning the previous
+      # cycle had just written, and shipped the exact defect it warned about (#13).
+      #
+      # Two deliberate properties, both load-bearing:
+      #   1. The wait is capped at 10 minutes (30 checks x 20s).
+      #   2. On timeout it WARNS and proceeds -- it does not fail. A hung or
+      #      long-running manual learning job must not permanently block the
+      #      pipeline. `gh run list --workflow` returns runs across all branches,
+      #      which is what we want (the learning job runs on main) but also means a
+      #      manual invocation can hold dispatch for the full cap. Warn-and-proceed
+      #      is the safety valve; do not turn it into a hard failure.
+      - name: Wait for compound-learning to land
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          for i in $(seq 1 30); do
+            RUNNING=$(gh run list --repo ${{ github.repository }} \
+              --workflow compound-learning.yml --status in_progress \
+              --json databaseId --jq 'length')
+            QUEUED=$(gh run list --repo ${{ github.repository }} \
+              --workflow compound-learning.yml --status queued \
+              --json databaseId --jq 'length')
+            if [ "$RUNNING" = "0" ] && [ "$QUEUED" = "0" ]; then
+              echo "compound-learning idle after ${i} checks."
+              exit 0
+            fi
+            echo "compound-learning busy (in_progress=$RUNNING queued=$QUEUED) — waiting 20s"
+            sleep 20
+          done
+          echo "::warning::compound-learning still running after 10 minutes — proceeding."
+      # The checkout above predates the wait, so it predates whatever
+      # compound-learning just pushed. Re-point it at current main so the agent reads
+      # the AGENTS.md that exists now rather than the one from the merge event (#13).
+      #
+      # `git checkout origin/main --detach` DISCARDS the working tree. It is safe only
+      # here: after the wait, before the agent writes any file and before the branch is
+      # cut. Moving it later would silently destroy the agent's work.
+      - name: Refresh main
+        run: git fetch origin main && git checkout origin/main --detach
       - name: Check sequential dependency (retry)
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}

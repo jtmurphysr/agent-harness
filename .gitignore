@@ -34,4 +34,6 @@ venv/
 .ruff_cache/
 .coverage
 .coverage.*
+# Written by the per-file floor gate in CI and by anyone running it locally (#14).
+coverage.json
 htmlcov/
