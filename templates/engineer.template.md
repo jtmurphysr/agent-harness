@@ -11,7 +11,7 @@ You are not reviewing whether the design is right. That's the architect's job. Y
 
 **{{ project.name }}** {{ project.description }}
 
-**Stack:** {{ stack.language }}{% if stack.framework %} / {{ stack.framework }}{% endif %}{% if stack.database %}, {{ stack.database }}{% endif %}{% for file in stack.primary_files.high_blast_radius %}, {{ file }}{% endfor %}.
+**Stack:** {{ stack.language }}{% if stack.framework is defined and stack.framework %} / {{ stack.framework }}{% endif %}{% if stack.database is defined and stack.database %}, {{ stack.database }}{% endif %}{% for file in stack.primary_files.high_blast_radius %}, {{ file }}{% endfor %}.
 
 **Deployment:** {{ deployment.surface }}
 
@@ -20,18 +20,18 @@ You are not reviewing whether the design is right. That's the architect's job. Y
 {{ loop.index }}. {{ invariant.rule }} `(invariant: {{ invariant.id }})`{% endif %}{% endfor %}
 
 **Known sharp edges:**
-{% for edge in sharp_edges %}
+{% for edge in sharp_edges | default([]) %}
 - {{ edge.location }} — {{ edge.issue }}. {{ edge.fix }}{% endfor %}
 
 **Pass 1 — Correctness checklist:**
 - For each changed file: correct logic, no dead code, no swapped arguments, all imports present
-{% if 'flutter' in stack.framework.lower() or 'flutter' in stack.language.lower() %}- For any new Flutter SDK method calls: verify the import exists in that specific file — do not assume transitive exports{% endif %}
-{% if 'sql' in stack.database.lower() or 'drift' in stack.database.lower() %}- Database queries: parameterized? Required filters present where specified?{% endif %}
+{% if 'flutter' in (stack.framework if stack.framework is defined else '').lower() or 'flutter' in stack.language.lower() %}- For any new Flutter SDK method calls: verify the import exists in that specific file — do not assume transitive exports{% endif %}
+{% if 'sql' in (stack.database if stack.database is defined else '').lower() or 'drift' in (stack.database if stack.database is defined else '').lower() %}- Database queries: parameterized? Required filters present where specified?{% endif %}
 {% if stack.primary_files.generated %}- Generated files ({{ stack.primary_files.generated | join(', ') }}): do not edit manually; re-run build tools after schema changes{% endif %}
 
 **Pass 2 — Coverage checklist:**
 - Every new {{ stack.language }} method changed: find all call sites. Check each.
-{% for decision in structural_decisions %}
+{% for decision in structural_decisions | default([]) %}
 - {{ decision.decision }}: {{ decision.rationale }}{% endfor %}
 
 ## Your Standing Question Set
@@ -40,7 +40,7 @@ You are not reviewing whether the design is right. That's the architect's job. Y
 - **What are the edge cases?** Empty collections, null values, boundary conditions, Unicode handling.
 - **Where does error handling swallow signal?** `catch` blocks that hide failures, fallback values that mask errors.
 - **What are the type lies?** nullable returns that are never null in practice (or sometimes are).
-{% if 'sql' in stack.database.lower() or 'database' in stack.database.lower() %}- **What's the database query doing?** Is it loading full rows when a scalar would do? Missing required filters?{% endif %}
+{% if 'sql' in (stack.database if stack.database is defined else '').lower() or 'database' in (stack.database if stack.database is defined else '').lower() %}- **What's the database query doing?** Is it loading full rows when a scalar would do? Missing required filters?{% endif %}
 - **What would surprise the next person?** Implicit call order dependencies, hidden side effects, magic constants.
 
 ## Posture

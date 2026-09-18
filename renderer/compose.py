@@ -1,5 +1,6 @@
 """Jinja2 template composition logic."""
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -59,11 +60,18 @@ def compose_agent(
     except Exception as e:
         raise CompositionError(f"Template rendering failed: {e}") from e
 
-    # Create generation header
+    # Assemble a file Claude Code will actually load as a subagent. The frontmatter
+    # MUST be the first line of the file and MUST carry `name:` and `description:`,
+    # or Claude Code reads the file as documentation and registers nothing -- with
+    # no error. Every agent file this renderer produced before this change had three
+    # HTML comments above the frontmatter and no `name:`, so every generated
+    # project's reviewers were silently inert. The provenance comment now goes
+    # AFTER the closing `---`, where it is still within the first ten lines that
+    # reviewers/dispatch.py scans for the template version.
     generation_header = _create_generation_header(template_path, template_version)
-
-    # Combine header with rendered content
-    final_content = generation_header + rendered_content
+    final_content = _with_subagent_frontmatter(
+        rendered_content, template_path, context_data, generation_header
+    )
 
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +109,42 @@ def _extract_template_version(template_content: str) -> str:
         raise CompositionError("No version found in template frontmatter")
 
     return version_match.group(1)
+
+
+_ROLE_DESCRIPTIONS = {
+    "engineer": "code review — correctness, tests, style, and whether the change does what its issue says",
+    "architect": "structural review — module boundaries, layering, data shape, and whether the design fits the system's grain",
+    "sre": "production-safety review — failure modes, secret exposure, rollback paths, and dispatch-chain integrity",
+    "deploy": "deployment review — release surface, store requirements, and rollout safety",
+}
+
+
+def _with_subagent_frontmatter(
+    rendered: str, template_path: Path, context_data: dict[str, Any], provenance: str
+) -> str:
+    """Rewrite the rendered file so its frontmatter is what Claude Code registers.
+
+    The template's own frontmatter carries `version` and `propagation`, which Claude
+    Code ignores. A subagent needs `name` and `description` and needs the opening
+    `---` on line 1. So: keep the template's keys, add ours, put the block first,
+    and drop the provenance comment in immediately after it.
+    """
+    role = template_path.name.replace(".template.md", "")
+    project = context_data.get("project", {}).get("name", "this project")
+    description = f"{role} reviewer for {project}: {_ROLE_DESCRIPTIONS.get(role, 'review')}."
+
+    m = re.match(r"^---\n(.*?)\n---\n?", rendered, re.DOTALL)
+    template_keys = m.group(1) if m else ""
+    body = rendered[m.end() :] if m else rendered
+
+    # YAML-quote the description: it contains a colon, and Claude Code parses this
+    # block as YAML. A bare `description: a: b` is a scanner error, not a string.
+    # json.dumps produces a valid double-quoted YAML scalar with escapes handled.
+    frontmatter_lines = [f"name: {role}", f"description: {json.dumps(description)}"]
+    if template_keys.strip():
+        frontmatter_lines.append(template_keys.rstrip())
+    frontmatter = "---\n" + "\n".join(frontmatter_lines) + "\n---\n"
+    return frontmatter + provenance + body.lstrip("\n")
 
 
 def _create_generation_header(template_path: Path, template_version: str) -> str:

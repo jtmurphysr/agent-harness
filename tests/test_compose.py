@@ -128,11 +128,23 @@ Simple template content.
         content = output_file.read_text(encoding="utf-8")
         lines = content.split("\n")
 
-        # Verify header format
-        assert lines[0] == "<!-- GENERATED FILE — DO NOT EDIT -->"
-        assert "simple.template.md v2.1.0 + project_context.md" in lines[1]
-        assert "harness render" in lines[2]
-        assert lines[3] == ""  # Empty line after header
+        # The frontmatter MUST be line 1 and MUST carry name/description, or Claude
+        # Code treats the file as documentation and registers no subagent -- silently.
+        # This test used to assert the generation header was line 1. That pinned the
+        # defect as the contract: every rendered agent was inert.
+        assert lines[0] == "---"
+        assert lines[1] == "name: simple"
+        assert lines[2].startswith(
+            'description: "simple reviewer for '
+        )  # YAML-quoted: it contains a colon
+        assert 'version: "2.1.0"' in lines  # template keys retained
+        closing = lines.index("---", 1)
+        # Provenance comes right after the frontmatter, inside the first ten lines
+        # that reviewers/dispatch.py scans for the template version.
+        assert lines[closing + 1] == "<!-- GENERATED FILE — DO NOT EDIT -->"
+        assert "simple.template.md v2.1.0 + project_context.md" in lines[closing + 2]
+        assert "harness render" in lines[closing + 3]
+        assert closing + 2 < 10
 
     def test_compose_agent_preserves_template_version(self, tmp_path: Path) -> None:
         """Test that template version is extracted and preserved in output."""

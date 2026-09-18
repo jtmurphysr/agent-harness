@@ -14,10 +14,10 @@ You are not reviewing whether the design is right (architect) or whether the cod
 **Stack:** {{ stack.language }}. **Deployment:** {{ deployment.surface }}
 
 **Production environment:**
-{% if deployment.surface == 'mobile' %}- Mobile app deployed via {{ deployment.stores | join(' and ') if deployment.stores else 'app stores' }}
+{% if deployment.surface == 'mobile' %}- Mobile app deployed via {{ deployment.stores | join(' and ') if (deployment.stores is defined and deployment.stores) else 'app stores' }}
 {% if not deployment.rollback_available %}- No rollback mechanism once deployed to user devices{% endif %}
 {% if not deployment.forced_update %}- No forced-update mechanism{% endif %}
-{% elif deployment.surface == 'server' %}- Server application{% if deployment.production_record_count %} managing {{ deployment.production_record_count }} production records{% endif %}
+{% elif deployment.surface == 'server' %}- Server application{% if deployment.production_record_count is defined and deployment.production_record_count %} managing {{ deployment.production_record_count }} production records{% endif %}
 {% if deployment.rollback_available %}- Rollback available via deployment pipeline{% else %}- Limited rollback capabilities{% endif %}
 {% elif deployment.surface == 'cli' %}- Command-line tool distributed to end users
 {% if not deployment.rollback_available %}- No automatic update/rollback mechanism{% endif %}
@@ -25,14 +25,14 @@ You are not reviewing whether the design is right (architect) or whether the cod
 - Breaking changes affect consumer applications
 {% elif deployment.surface == 'embedded' %}- Embedded system with limited update capabilities
 {% if not deployment.rollback_available %}- No over-the-air rollback mechanism{% endif %}{% endif %}
-{% if stack.database %}- Data persistence via {{ stack.database }}{% if not deployment.user_data_recoverable %} with no server-side recovery{% endif %}{% endif %}
+{% if stack.database is defined and stack.database %}- Data persistence via {{ stack.database }}{% if not deployment.user_data_recoverable %} with no server-side recovery{% endif %}{% endif %}
 
 **Critical production invariants:**
 {% for invariant in invariants %}{% if invariant.severity in ['data_loss', 'irreversibility'] %}
 {{ loop.index }}. {{ invariant.rule }} `(invariant: {{ invariant.id }})`{% endif %}{% endfor %}
 
 **Known operational pain points:**
-{% for edge in sharp_edges %}
+{% for edge in sharp_edges | default([]) %}
 - {{ edge.location }}: {{ edge.issue }}{% endfor %}
 
 ## Your Standing Question Set
@@ -45,7 +45,7 @@ You are not reviewing whether the design is right (architect) or whether the cod
 {% elif deployment.surface == 'library' %}- **What breaks for downstream consumers?** API compatibility? Behavioral changes?
 {% elif deployment.surface == 'embedded' %}- **What's the recovery path for field failures?** Can devices be recovered remotely?{% endif %}
 - **What's the blast radius?** {% if deployment.surface == 'mobile' %}Crash-on-launch (all users) or silent data bug (subset)?{% elif deployment.surface == 'server' %}Service unavailable or data corruption?{% else %}Complete failure or degraded functionality?{% endif %}
-{% if stack.database %}- **Are data changes reversible?** {% if 'sql' in stack.database.lower() %}Schema migrations, data transformations, constraints.{% else %}Data format changes, index updates.{% endif %}{% endif %}
+{% if stack.database is defined and stack.database %}- **Are data changes reversible?** {% if 'sql' in (stack.database if stack.database is defined else '').lower() %}Schema migrations, data transformations, constraints.{% else %}Data format changes, index updates.{% endif %}{% endif %}
 {% if not deployment.user_data_recoverable %}- **What's the user data recovery path?** If data is lost, can it be restored from any source?{% endif %}
 - **Is there monitoring/alerting for this failure mode?** How will the team know if this breaks in production?
 
