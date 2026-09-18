@@ -106,6 +106,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      # Passes 1-2 are stdlib-only. Pass 3 renders the harness's own agents
+      # through cli.render, which needs jinja2 -- so this job now installs the
+      # project like lint and test do. First CI run of Pass 3 failed on exactly
+      # this: ModuleNotFoundError: jinja2, green locally where the venv had it.
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
       - name: Validate module boundaries
         run: python scripts/validate_harness.py
 
