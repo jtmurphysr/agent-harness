@@ -248,3 +248,80 @@ class TestTemplates:
                     assert not match.endswith("}}") or " " in match[-4:], (
                         f"{template_name}: {description} should have space before closing: {match}"
                     )
+
+
+class TestTemplatesRenderAgainstMinimalContext:
+    """Every template must render from the MINIMAL context the validator accepts.
+
+    The validator makes stack.database, deployment.stores and
+    deployment.production_record_count optional (stack.framework is required). The templates render under
+    StrictUndefined, so a bare `{% if stack.database %}` RAISES when the key is
+    absent instead of evaluating false. Fourteen such sites shipped; the first
+    render of the harness's own context hit one. Every optional field must be
+    guarded with `is defined`. This test is what enforces that.
+
+    StrictUndefined itself is correct and stays: switching to ChainableUndefined
+    would make `{{ stack.langauge }}` render as empty string -- a typo silently
+    becoming a claim without a mechanism. The guards belong in the templates.
+
+    Goes through render_agents (validator -> renderer -> composer), not
+    compose_agent directly, because render_agents injects reviewer_role and
+    project_context and that is the path every generated project takes.
+    """
+
+    MINIMAL_CONTEXT_MD = """---
+project:
+  name: "minimal"
+  description: "The smallest context the validator accepts."
+stack:
+  language: "python"
+  framework: "none"
+  primary_files:
+    high_blast_radius: []
+    generated: []
+deployment:
+  surface: "server"
+  rollback_available: true
+  forced_update: false
+  user_data_recoverable: true
+invariants: []
+reviewers:
+  engineer: {enabled: true, model_class: "code_review"}
+  architect: {enabled: true, model_class: "structural_review"}
+  sre: {enabled: true, model_class: "adversarial_review"}
+---
+"""
+
+    def _render_minimal(self, tmp_path: Path) -> Path:
+        from cli.render import render_agents
+
+        ctx = tmp_path / "project_context.md"
+        ctx.write_text(self.MINIMAL_CONTEXT_MD)
+        out = tmp_path / "agents"
+        templates_dir = Path(__file__).parent.parent / "templates"
+        render_agents(ctx, templates_dir, out, update_lock=False)
+        return out
+
+    def test_every_enabled_template_renders_from_minimal_context(self, tmp_path: Path) -> None:
+        out = self._render_minimal(tmp_path)
+        for role in ("engineer", "architect", "sre"):
+            text = (out / f"{role}.md").read_text()
+            assert text.startswith("---\nname: " + role + "\n"), (
+                f"{role}.md: rendered file must open with frontmatter naming the subagent"
+            )
+            assert "{{" not in text and "{%" not in text, (
+                f"{role}.md: unrendered Jinja left in output"
+            )
+
+    def test_rendered_file_is_a_loadable_subagent(self, tmp_path: Path) -> None:
+        """The fields Claude Code needs, in the position it needs them."""
+        out = self._render_minimal(tmp_path)
+        lines = (out / "sre.md").read_text().split("\n")
+        assert lines[0] == "---", "opening --- must be line 1 or Claude Code ignores the file"
+        closing = lines.index("---", 1)
+        fm = yaml.safe_load("\n".join(lines[1:closing]))
+        assert fm["name"] == "sre"
+        assert fm["description"].startswith("sre reviewer for minimal")
+        assert "version" in fm  # template provenance retained; Claude Code ignores unknown keys
+        # Provenance must stay inside the ten-line window reviewers/dispatch.py scans.
+        assert any("Source:" in ln and "template.md" in ln for ln in lines[:10])

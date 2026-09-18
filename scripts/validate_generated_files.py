@@ -161,7 +161,10 @@ class GeneratedFileValidator:
         Returns:
             True if generation header is present
         """
-        return content.startswith("<!-- GENERATED FILE — DO NOT EDIT -->")
+        # The marker follows the frontmatter, not line 1: a subagent file must open
+        # with `---` or Claude Code ignores it. Same 10-line window dispatch.py scans.
+        head = content.split("\n")[:10]
+        return any(line == "<!-- GENERATED FILE — DO NOT EDIT -->" for line in head)
 
     def _extract_header_info(self, content: str) -> tuple[str, str]:
         """Extract template name and version from generation header.
@@ -175,16 +178,15 @@ class GeneratedFileValidator:
         Raises:
             ValidationError: If header info cannot be extracted
         """
-        lines = content.split("\n")
-        if len(lines) < 2:
-            raise ValidationError("Invalid generation header format")
-
-        source_line = lines[1]
-
-        # Parse source line: <!-- Source: template.md vX.Y.Z + project_context.md -->
-        source_match = re.match(
-            r"<!-- Source: ([^\s]+) v([^\s]+) \+ project_context\.md -->", source_line
-        )
+        # Find the Source: line wherever it sits in the head -- it follows the
+        # frontmatter block, whose length depends on how many keys the template has.
+        source_match = None
+        for source_line in content.split("\n")[:10]:
+            source_match = re.match(
+                r"<!-- Source: ([^\s]+) v([^\s]+) \+ project_context\.md -->", source_line
+            )
+            if source_match:
+                break
 
         if not source_match:
             raise ValidationError("Could not parse template info from header")

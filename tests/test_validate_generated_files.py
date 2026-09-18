@@ -97,26 +97,21 @@ class TestGeneratedFileValidator:
         agents_dir = factory_dir / "agents"
         agents_dir.mkdir()
 
-        engineer_file = agents_dir / "engineer.md"
-        engineer_content = dedent("""
-            <!-- GENERATED FILE — DO NOT EDIT -->
-            <!-- Source: engineer.template.md v1.0.0 + project_context.md -->
-            <!-- Regenerate with: harness render -->
+        # Produce the on-disk file the same way the harness does. This test used to
+        # hand-write the old layout (HTML comments above the frontmatter) and assert
+        # "no drift" -- which pinned a file Claude Code would silently refuse to load
+        # as the reference. The validator re-renders to compare, so the fixture must
+        # come from the renderer or it is testing two hand-typed copies against each
+        # other.
+        from renderer.validators import validate_project_context
 
-            ---
-            version: "1.0.0"
-            propagation: opt_in
-            ---
-
-            You are the Engineer reviewer for **TestProject**.
-
-            ## Project Context
-            Stack: Python
-        """).strip()
-        engineer_file.write_text(engineer_content)
-
-        # Test validation
         validator = GeneratedFileValidator(templates_dir)
+        context_data = validate_project_context(project_context)
+        engineer_file = agents_dir / "engineer.md"
+        engineer_file.write_text(
+            validator._generate_expected_content(engineer_template, context_data, "engineer")
+        )
+
         errors = validator.validate_agents_directory(factory_dir)
 
         assert errors == []
@@ -586,9 +581,11 @@ class TestGeneratedFileValidator:
 
         validator = GeneratedFileValidator(templates_dir)
 
-        content = "<!-- GENERATED FILE — DO NOT EDIT -->"
+        content = (
+            "<!-- GENERATED FILE — DO NOT EDIT -->"  # marker present, no Source: line anywhere
+        )
 
-        with pytest.raises(ValidationError, match="Invalid generation header format"):
+        with pytest.raises(ValidationError, match="Could not parse template info from header"):
             validator._extract_header_info(content)
 
     def test_cli_main_success(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

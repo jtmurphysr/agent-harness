@@ -339,6 +339,68 @@ def check_coverage_omit_drift() -> CoverageOmitResult:
 
 
 # ─────────────────────────────────────────────────────────────────
+# Rendered agent drift detection
+# ─────────────────────────────────────────────────────────────────
+
+AGENTS_DIR = Path(".claude/agents")
+TEMPLATES_DIR = Path("templates")
+OWN_CONTEXT = Path(".factory/project_context.md")
+
+
+def check_rendered_agents() -> list[str]:
+    """Render templates/ + .factory/project_context.md fresh; diff against .claude/agents/.
+
+    Returns drift descriptions; empty means in sync. Missing inputs are reported as
+    drift rather than skipped: a harness with no context for itself has no way to
+    know its reviewers are current, and that is the condition this pass exists to
+    catch. Uses cli.render.render_agents -- the same code path every generated
+    project takes -- so a renderer bug shows up here first.
+    """
+    import tempfile
+
+    problems: list[str] = []
+    if not OWN_CONTEXT.exists():
+        return [
+            f"{OWN_CONTEXT} is missing -- the harness has no project context to render its own agents from"
+        ]
+    if not TEMPLATES_DIR.is_dir():
+        return [f"{TEMPLATES_DIR}/ is missing"]
+
+    sys.path.insert(0, str(REPO_ROOT.resolve()))
+    from cli.render import RenderError, render_agents
+
+    with tempfile.TemporaryDirectory() as tmp:
+        fresh = Path(tmp)
+        try:
+            render_agents(OWN_CONTEXT, TEMPLATES_DIR, fresh, update_lock=False)
+        except RenderError as e:
+            return [f"rendering {OWN_CONTEXT} failed: {e}"]
+
+        expected = {p.name: p.read_text(encoding="utf-8") for p in fresh.glob("*.md")}
+        on_disk = (
+            {p.name: p.read_text(encoding="utf-8") for p in AGENTS_DIR.glob("*.md")}
+            if AGENTS_DIR.is_dir()
+            else {}
+        )
+
+    for name, content in sorted(expected.items()):
+        if name not in on_disk:
+            problems.append(
+                f"{AGENTS_DIR / name} is missing -- run: python scripts/render_own_agents.py"
+            )
+        elif on_disk[name] != content:
+            problems.append(
+                f"{AGENTS_DIR / name} differs from a fresh render -- "
+                "edit templates/ or .factory/project_context.md, then run: python scripts/render_own_agents.py"
+            )
+    for name in sorted(set(on_disk) - set(expected)):
+        problems.append(
+            f"{AGENTS_DIR / name} has no template behind it -- delete it or enable its reviewer"
+        )
+    return problems
+
+
+# ─────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────
 
@@ -425,14 +487,38 @@ def main() -> None:
                 print(f"    {line}")
             print()
 
+    # ── Pass 3: Own agent definitions are rendered, not hand-written ──
+    # .claude/agents/*.md are what Claude Code loads as this repo's reviewers. They
+    # are rendered from templates/ + .factory/project_context.md by the same
+    # pipeline every generated project uses -- the harness dogfoods its renderer.
+    # Claude Code's protected-path guard refuses agent writes under .claude/, so
+    # agents change the template or the context and re-render; they never edit
+    # the output. If the on-disk copy differs from a fresh render, someone did.
+    print()
+    print("── Pass 3: Rendered agent definitions in sync ──")
+    agent_drift = check_rendered_agents()
+    if agent_drift:
+        print(f"   ❌ {len(agent_drift)} rendered-agent drift violation(s):\n")
+        for msg in agent_drift:
+            print(f"    {msg}")
+        print()
+    else:
+        print(
+            "   ✅ .claude/agents/ matches a fresh render of templates/ + .factory/project_context.md"
+        )
+
     # ── Final verdict ──
     print()
-    all_clean = boundary_result.clean and coverage_result.clean
+    all_clean = boundary_result.clean and coverage_result.clean and not agent_drift
     if all_clean:
         print("   ✅ All checks passed.")
         sys.exit(0)
     else:
-        total = len(boundary_result.violations) + len(coverage_result.drift_violations)
+        total = (
+            len(boundary_result.violations)
+            + len(coverage_result.drift_violations)
+            + len(agent_drift)
+        )
         print(f"   ❌ {total} total violation(s)")
         if not report_mode:
             print()
