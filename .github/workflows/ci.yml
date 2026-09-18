@@ -178,6 +178,14 @@ jobs:
             --cov-fail-under=85 \
             --tb=short \
             -q
+      # --cov-fail-under gates the TOTAL only; a module can sit at 0% under a green
+      # total. This is the per-file floor AGENTS.md has always declared (#14). It
+      # compares raw floats and prints two decimals, so 84.69% can no longer hide
+      # as "85%". ADDITIONAL to the total gate, not a replacement.
+      - name: Per-file coverage floor
+        run: |
+          coverage json -o coverage.json
+          python scripts/check_coverage_floor.py
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         if: always()

@@ -67,6 +67,10 @@ omit = [
 ]
 
 [tool.coverage.report]
+# Two decimals: at the default integer precision every value in [84.50, 85.49]
+# prints as "85%", so a file just under the floor reads as compliant in every
+# log it appears in -- including the report the GC agent is handed (#14).
+precision = 2
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

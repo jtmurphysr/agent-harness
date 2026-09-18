@@ -240,9 +240,11 @@ named PR-body section.
 And `coverage report` rounds to integer percent, so `84.69%` prints as `85%` —
 the sub-floor band is invisible at default precision.
 
-- Per-file floors are enforced by `scripts/check_coverage_floor.py` (2dp, raw
-  float comparison), not by the total.
-- Confirm any figure near the floor with `coverage report --precision=2`.
+- Per-file floors are enforced in CI by `scripts/check_coverage_floor.py` (raw
+  float comparison, two decimals), as a step after the total gate. Run it locally
+  with `coverage json -o coverage.json && python scripts/check_coverage_floor.py`.
+- `[tool.coverage.report] precision = 2` is set, so every report you see prints
+  two decimals. If you see an integer percentage, you are looking at stale output.
 - A COVERAGE REQUIREMENTS floor *above* the module's current figure is a hidden
   test requirement: the named tests are not sufficient by construction. Measure
   first, then write.
