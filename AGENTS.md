@@ -314,6 +314,26 @@ moment its predecessor merged. **Every gate lives in one job that every trigger
 depends on**, reads its input itself, and fails when it cannot. If a check sits
 in an `if:` expression, ask which events can reach the job without it.
 
+### ⚠️ LESSON 15: Read GitHub with `gh api`, never `gh pr view --json`
+
+<!-- added after PR #30 — third occurrence, see docs/learnings/pr-30.md -->
+
+`gh pr view --json` and `gh issue view --json` route through GraphQL, whose
+`login`, `name` and `slug` fields require the `read:org` scope. `GH_PAT`
+deliberately carries `repo` and nothing else, so those calls fail with a scope
+error in CI and in any agent session — including read-only ones, and including
+the compound-learning agent, which is how this became a lesson rather than a
+comment. Use REST:
+
+```bash
+gh api "repos/$repo/pulls/$pr" -q '.body'          # not: gh pr view --json body
+gh api "repos/$repo/pulls/$pr/files" --paginate -q '.[].filename'
+gh api "repos/$repo/issues/$n/comments" -q '.[].body'
+```
+
+`gh pr create`, `gh pr diff` and `gh issue list` are fine. It is the `--json`
+flag on `view` that crosses into GraphQL.
+
 ---
 
 ## Definition of Done
