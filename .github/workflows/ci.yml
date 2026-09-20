@@ -251,6 +251,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: check-project
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'agent-task')
+    # A job with no timeout gets the 360-minute default. Merging is what advances
+    # the sequential dispatch chain, so one hung reviewer holds the whole queue
+    # for six hours. A review that has not finished in 20 minutes has failed.
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: write
@@ -295,7 +299,12 @@ jobs:
             exit 1
           fi
           ISSUE_TITLE=$(gh api "repos/$REPO/issues/$ISSUE" -q '.title // ""')
-          ISSUE_BODY=$(gh api "repos/$REPO/issues/$ISSUE" -q '.body // ""')
+          # The bodies are capped for the same reason the diff is: everything
+          # assembled here goes through $GITHUB_OUTPUT, which has a ~1MB per-job
+          # limit that TRUNCATES rather than errors. A silently cut prompt is a
+          # reviewer reading half a spec and not knowing it.
+          ISSUE_BODY=$(gh api "repos/$REPO/issues/$ISSUE" -q '.body // ""' | head -c 100000)
+          PR_BODY=$(printf '%s' "$PR_BODY" | head -c 100000)
 
           gh pr diff "$PR" --repo "$REPO" > "$RUNNER_TEMP/pr.diff"
           DIFF_NOTE=""
@@ -370,7 +379,16 @@ jobs:
           # line the agent gets the SDK's read-only default set and nothing
           # else -- v1 does not read .claude/settings.json. gc-agent.yml ran for
           # three weeks green, producing nothing, on exactly that omission.
-          claude_args: --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*)"
+          #
+          # #29 specified `Read,Grep,Glob,Bash(git diff:*),Bash(git log:*)` and
+          # said to read permission_denials_count on the first run. It was 8:
+          # the reviewers reached for `grep -rn`, `ls` and `git show` and were
+          # refused. The grant is widened to those, and to nothing that writes --
+          # no sed, no find (-delete/-exec), no bare Bash.
+          claude_args: >-
+            --allowedTools
+            "Read,Grep,Glob,TodoWrite,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),Bash(grep:*),Bash(rg:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*)"
+            --max-turns 60
           prompt: ${{ steps.prompt.outputs.prompt }}
       - name: Parse verdict
         env:
@@ -386,8 +404,22 @@ jobs:
           # gc-agent.yml burned three weeks of green runs with 18 denials and no
           # output. A denial does not fail this job on its own -- a missing
           # verdict already does -- but it is never allowed to stay buried in
-          # the result JSON.
-          DENIALS=$(jq '[.[] | select(.type == "result")] | last | (.permission_denials // []) | length' "$EXEC_FILE")
+          # the result JSON. The first run of these jobs reported 8, which is
+          # what widened the tool grant above.
+          #
+          # No result record means the reviewer never finished. Check it before
+          # reading anything out of the file, so a missing record is an error
+          # rather than a confident zero.
+          if [ "$(jq '[.[] | select(.type == "result")] | length' "$EXEC_FILE")" = "0" ]; then
+            echo "::error::review-$ROLE: the execution file carries no result record. The reviewer did not finish."
+            exit 1
+          fi
+          # Both spellings: the raw execution file carries the ARRAY
+          # `permission_denials`; the action's own sanitised summary carries the
+          # scalar `permission_denials_count`. Reading only one of them is how
+          # this number turns into a confident 0.
+          DENIALS=$(jq '[.[] | select(.type == "result")] | last
+                        | (.permission_denials_count // (.permission_denials | length) // 0)' "$EXEC_FILE")
           echo "permission_denials_count: $DENIALS"
           if [ "$DENIALS" != "0" ]; then
             echo "::warning::review-$ROLE hit $DENIALS permission denial(s) — the claude_args tool grant is too narrow for what this reviewer tried to read."
@@ -407,10 +439,20 @@ jobs:
           # One comment per role, EDITED on re-run. Three reviewers times every
           # push is how a PR becomes unreadable; the workflow-change guard and
           # the spec-conformance gate each learned this separately.
-          if [ -s "$RUNNER_TEMP/comment.md" ]; then
-            MARKER="<!-- review-$ROLE -->"
-            EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-              | jq -r --arg m "$MARKER" '.[] | select(.body | startswith($m)) | .id' | tail -1) || EXISTING=""
+          #
+          # A PASS never OPENS a thread -- a clean review is silent. But it does
+          # EDIT one this role opened earlier, because otherwise a BLOCK comment
+          # outlives the push that fixed it: the PR keeps a comment saying it
+          # cannot merge while it merges, and `/agent retry` feeds the next agent
+          # a finding no reviewer can retract. A verdict that cannot be withdrawn
+          # is not a verdict. Caught by this gate on its own first run.
+          MARKER="<!-- review-$ROLE -->"
+          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            | jq -r --arg m "$MARKER" '.[] | select(.body | startswith($m)) | .id' | tail -1) || EXISTING=""
+          WRITE=true
+          [ -s "$RUNNER_TEMP/comment.md" ] || WRITE=false
+          [ "$SEVERITY" != "PASS" ] || [ -n "$EXISTING" ] || WRITE=false
+          if [ "$WRITE" = "true" ]; then
             # Writing the comment is best-effort; the exit code below is the
             # gate. A GitHub hiccup must not turn a WARN into a merge-block, and
             # a PATCH against a comment someone deleted falls back to a POST.
@@ -435,6 +477,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: check-project
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'agent-task')
+    # A job with no timeout gets the 360-minute default. Merging is what advances
+    # the sequential dispatch chain, so one hung reviewer holds the whole queue
+    # for six hours. A review that has not finished in 20 minutes has failed.
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: write
@@ -443,6 +489,10 @@ jobs:
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
     steps:
+      # The PR HEAD, not the merge commit: the reviewer judges the commits that
+      # were written, and `git log` on a synthetic merge shows the wrong author
+      # and the wrong parentage. fetch-depth 0 so `git log` and `git diff
+      # origin/main...HEAD` both work inside the agent's tool grant.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -452,6 +502,8 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+      # Runtime deps only -- the verify step imports reviewers.verdicts and
+      # renderer.validators, neither of which needs the dev extras.
       - name: Install dependencies
         run: pip install -e .
       - name: Assemble reviewer prompt
@@ -461,6 +513,8 @@ jobs:
           BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           set -uo pipefail
+          # Same authority the spec-conformance gate uses: the branch names the
+          # dispatched issue; the body's first closing keyword is the fallback.
           ISSUE=$(printf '%s\n' "$BRANCH" | sed -nE 's#^claude/issue-([0-9]+)([-/].*)?$#\1#p' | head -1)
           PR_BODY=$(gh api "repos/$REPO/pulls/$PR" -q '.body // ""')
           if [ -z "$ISSUE" ]; then
@@ -471,18 +525,27 @@ jobs:
             exit 1
           fi
           ISSUE_TITLE=$(gh api "repos/$REPO/issues/$ISSUE" -q '.title // ""')
-          ISSUE_BODY=$(gh api "repos/$REPO/issues/$ISSUE" -q '.body // ""')
+          # The bodies are capped for the same reason the diff is: everything
+          # assembled here goes through $GITHUB_OUTPUT, which has a ~1MB per-job
+          # limit that TRUNCATES rather than errors. A silently cut prompt is a
+          # reviewer reading half a spec and not knowing it.
+          ISSUE_BODY=$(gh api "repos/$REPO/issues/$ISSUE" -q '.body // ""' | head -c 100000)
+          PR_BODY=$(printf '%s' "$PR_BODY" | head -c 100000)
 
           gh pr diff "$PR" --repo "$REPO" > "$RUNNER_TEMP/pr.diff"
           DIFF_NOTE=""
           if [ "$(wc -c < "$RUNNER_TEMP/pr.diff")" -gt 300000 ]; then
             head -c 300000 "$RUNNER_TEMP/pr.diff" > "$RUNNER_TEMP/pr.diff.cut"
             mv "$RUNNER_TEMP/pr.diff.cut" "$RUNNER_TEMP/pr.diff"
+            # Say what was dropped. A silent truncation reads as "you saw it all".
             DIFF_NOTE="**The diff below is TRUNCATED at 300000 bytes.** Read the remainder with \`git diff origin/main...HEAD\` before you judge coverage or scope."
             echo "::warning::review-$ROLE: PR diff truncated at 300000 bytes in the prompt."
           fi
 
           {
+            # The rendered definition, verbatim. If this file is wrong, the
+            # render → load → review → verdict chain is wrong, and this is
+            # where it shows.
             cat ".claude/agents/$ROLE.md"
             echo
             echo "---"
@@ -534,8 +597,24 @@ jobs:
         uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # GH_PAT, never GH_WORKFLOW_PAT: a reviewer reads and comments. It has
+          # no reason to hold a token that can rewrite the workflow gating the
+          # PR it is reviewing.
           github_token: ${{ secrets.GH_PAT }}
-          claude_args: --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*)"
+          # Read-only, but over the WHOLE TREE, not just the diff. Without this
+          # line the agent gets the SDK's read-only default set and nothing
+          # else -- v1 does not read .claude/settings.json. gc-agent.yml ran for
+          # three weeks green, producing nothing, on exactly that omission.
+          #
+          # #29 specified `Read,Grep,Glob,Bash(git diff:*),Bash(git log:*)` and
+          # said to read permission_denials_count on the first run. It was 8:
+          # the reviewers reached for `grep -rn`, `ls` and `git show` and were
+          # refused. The grant is widened to those, and to nothing that writes --
+          # no sed, no find (-delete/-exec), no bare Bash.
+          claude_args: >-
+            --allowedTools
+            "Read,Grep,Glob,TodoWrite,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),Bash(grep:*),Bash(rg:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*)"
+            --max-turns 60
           prompt: ${{ steps.prompt.outputs.prompt }}
       - name: Parse verdict
         env:
@@ -548,7 +627,25 @@ jobs:
             exit 1
           fi
 
-          DENIALS=$(jq '[.[] | select(.type == "result")] | last | (.permission_denials // []) | length' "$EXEC_FILE")
+          # gc-agent.yml burned three weeks of green runs with 18 denials and no
+          # output. A denial does not fail this job on its own -- a missing
+          # verdict already does -- but it is never allowed to stay buried in
+          # the result JSON. The first run of these jobs reported 8, which is
+          # what widened the tool grant above.
+          #
+          # No result record means the reviewer never finished. Check it before
+          # reading anything out of the file, so a missing record is an error
+          # rather than a confident zero.
+          if [ "$(jq '[.[] | select(.type == "result")] | length' "$EXEC_FILE")" = "0" ]; then
+            echo "::error::review-$ROLE: the execution file carries no result record. The reviewer did not finish."
+            exit 1
+          fi
+          # Both spellings: the raw execution file carries the ARRAY
+          # `permission_denials`; the action's own sanitised summary carries the
+          # scalar `permission_denials_count`. Reading only one of them is how
+          # this number turns into a confident 0.
+          DENIALS=$(jq '[.[] | select(.type == "result")] | last
+                        | (.permission_denials_count // (.permission_denials | length) // 0)' "$EXEC_FILE")
           echo "permission_denials_count: $DENIALS"
           if [ "$DENIALS" != "0" ]; then
             echo "::warning::review-$ROLE hit $DENIALS permission denial(s) — the claude_args tool grant is too narrow for what this reviewer tried to read."
@@ -556,6 +653,8 @@ jobs:
 
           jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXEC_FILE" > "$RUNNER_TEMP/review.txt"
 
+          # The verify step is this script and nothing else. Exit 0 = PASS/WARN,
+          # 1 = BLOCK, 2 = no usable verdict.
           STATUS=0
           python scripts/parse_review_verdict.py --reviewer "$ROLE" \
             < "$RUNNER_TEMP/review.txt" > "$RUNNER_TEMP/parsed.txt" || STATUS=$?
@@ -563,10 +662,23 @@ jobs:
           tail -n +3 "$RUNNER_TEMP/parsed.txt" > "$RUNNER_TEMP/comment.md"
           echo "verdict: ${SEVERITY:-<none>}"
 
-          if [ -s "$RUNNER_TEMP/comment.md" ]; then
-            MARKER="<!-- review-$ROLE -->"
-            EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-              | jq -r --arg m "$MARKER" '.[] | select(.body | startswith($m)) | .id' | tail -1) || EXISTING=""
+          # One comment per role, EDITED on re-run. Three reviewers times every
+          # push is how a PR becomes unreadable; the workflow-change guard and
+          # the spec-conformance gate each learned this separately.
+          #
+          # A PASS never OPENS a thread -- a clean review is silent. But it does
+          # EDIT one this role opened earlier, because otherwise a BLOCK comment
+          # outlives the push that fixed it: the PR keeps a comment saying it
+          # cannot merge while it merges, and `/agent retry` feeds the next agent
+          # a finding no reviewer can retract. A verdict that cannot be withdrawn
+          # is not a verdict. Caught by this gate on its own first run.
+          MARKER="<!-- review-$ROLE -->"
+          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            | jq -r --arg m "$MARKER" '.[] | select(.body | startswith($m)) | .id' | tail -1) || EXISTING=""
+          WRITE=true
+          [ -s "$RUNNER_TEMP/comment.md" ] || WRITE=false
+          [ "$SEVERITY" != "PASS" ] || [ -n "$EXISTING" ] || WRITE=false
+          if [ "$WRITE" = "true" ]; then
             # Writing the comment is best-effort; the exit code below is the
             # gate. A GitHub hiccup must not turn a WARN into a merge-block, and
             # a PATCH against a comment someone deleted falls back to a POST.
@@ -591,6 +703,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: check-project
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'agent-task')
+    # A job with no timeout gets the 360-minute default. Merging is what advances
+    # the sequential dispatch chain, so one hung reviewer holds the whole queue
+    # for six hours. A review that has not finished in 20 minutes has failed.
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: write
@@ -599,6 +715,10 @@ jobs:
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
     steps:
+      # The PR HEAD, not the merge commit: the reviewer judges the commits that
+      # were written, and `git log` on a synthetic merge shows the wrong author
+      # and the wrong parentage. fetch-depth 0 so `git log` and `git diff
+      # origin/main...HEAD` both work inside the agent's tool grant.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -608,6 +728,8 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+      # Runtime deps only -- the verify step imports reviewers.verdicts and
+      # renderer.validators, neither of which needs the dev extras.
       - name: Install dependencies
         run: pip install -e .
       - name: Assemble reviewer prompt
@@ -617,6 +739,8 @@ jobs:
           BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           set -uo pipefail
+          # Same authority the spec-conformance gate uses: the branch names the
+          # dispatched issue; the body's first closing keyword is the fallback.
           ISSUE=$(printf '%s\n' "$BRANCH" | sed -nE 's#^claude/issue-([0-9]+)([-/].*)?$#\1#p' | head -1)
           PR_BODY=$(gh api "repos/$REPO/pulls/$PR" -q '.body // ""')
           if [ -z "$ISSUE" ]; then
@@ -627,18 +751,27 @@ jobs:
             exit 1
           fi
           ISSUE_TITLE=$(gh api "repos/$REPO/issues/$ISSUE" -q '.title // ""')
-          ISSUE_BODY=$(gh api "repos/$REPO/issues/$ISSUE" -q '.body // ""')
+          # The bodies are capped for the same reason the diff is: everything
+          # assembled here goes through $GITHUB_OUTPUT, which has a ~1MB per-job
+          # limit that TRUNCATES rather than errors. A silently cut prompt is a
+          # reviewer reading half a spec and not knowing it.
+          ISSUE_BODY=$(gh api "repos/$REPO/issues/$ISSUE" -q '.body // ""' | head -c 100000)
+          PR_BODY=$(printf '%s' "$PR_BODY" | head -c 100000)
 
           gh pr diff "$PR" --repo "$REPO" > "$RUNNER_TEMP/pr.diff"
           DIFF_NOTE=""
           if [ "$(wc -c < "$RUNNER_TEMP/pr.diff")" -gt 300000 ]; then
             head -c 300000 "$RUNNER_TEMP/pr.diff" > "$RUNNER_TEMP/pr.diff.cut"
             mv "$RUNNER_TEMP/pr.diff.cut" "$RUNNER_TEMP/pr.diff"
+            # Say what was dropped. A silent truncation reads as "you saw it all".
             DIFF_NOTE="**The diff below is TRUNCATED at 300000 bytes.** Read the remainder with \`git diff origin/main...HEAD\` before you judge coverage or scope."
             echo "::warning::review-$ROLE: PR diff truncated at 300000 bytes in the prompt."
           fi
 
           {
+            # The rendered definition, verbatim. If this file is wrong, the
+            # render → load → review → verdict chain is wrong, and this is
+            # where it shows.
             cat ".claude/agents/$ROLE.md"
             echo
             echo "---"
@@ -690,8 +823,24 @@ jobs:
         uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # GH_PAT, never GH_WORKFLOW_PAT: a reviewer reads and comments. It has
+          # no reason to hold a token that can rewrite the workflow gating the
+          # PR it is reviewing.
           github_token: ${{ secrets.GH_PAT }}
-          claude_args: --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*)"
+          # Read-only, but over the WHOLE TREE, not just the diff. Without this
+          # line the agent gets the SDK's read-only default set and nothing
+          # else -- v1 does not read .claude/settings.json. gc-agent.yml ran for
+          # three weeks green, producing nothing, on exactly that omission.
+          #
+          # #29 specified `Read,Grep,Glob,Bash(git diff:*),Bash(git log:*)` and
+          # said to read permission_denials_count on the first run. It was 8:
+          # the reviewers reached for `grep -rn`, `ls` and `git show` and were
+          # refused. The grant is widened to those, and to nothing that writes --
+          # no sed, no find (-delete/-exec), no bare Bash.
+          claude_args: >-
+            --allowedTools
+            "Read,Grep,Glob,TodoWrite,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),Bash(grep:*),Bash(rg:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*)"
+            --max-turns 60
           prompt: ${{ steps.prompt.outputs.prompt }}
       - name: Parse verdict
         env:
@@ -704,7 +853,25 @@ jobs:
             exit 1
           fi
 
-          DENIALS=$(jq '[.[] | select(.type == "result")] | last | (.permission_denials // []) | length' "$EXEC_FILE")
+          # gc-agent.yml burned three weeks of green runs with 18 denials and no
+          # output. A denial does not fail this job on its own -- a missing
+          # verdict already does -- but it is never allowed to stay buried in
+          # the result JSON. The first run of these jobs reported 8, which is
+          # what widened the tool grant above.
+          #
+          # No result record means the reviewer never finished. Check it before
+          # reading anything out of the file, so a missing record is an error
+          # rather than a confident zero.
+          if [ "$(jq '[.[] | select(.type == "result")] | length' "$EXEC_FILE")" = "0" ]; then
+            echo "::error::review-$ROLE: the execution file carries no result record. The reviewer did not finish."
+            exit 1
+          fi
+          # Both spellings: the raw execution file carries the ARRAY
+          # `permission_denials`; the action's own sanitised summary carries the
+          # scalar `permission_denials_count`. Reading only one of them is how
+          # this number turns into a confident 0.
+          DENIALS=$(jq '[.[] | select(.type == "result")] | last
+                        | (.permission_denials_count // (.permission_denials | length) // 0)' "$EXEC_FILE")
           echo "permission_denials_count: $DENIALS"
           if [ "$DENIALS" != "0" ]; then
             echo "::warning::review-$ROLE hit $DENIALS permission denial(s) — the claude_args tool grant is too narrow for what this reviewer tried to read."
@@ -712,6 +879,8 @@ jobs:
 
           jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXEC_FILE" > "$RUNNER_TEMP/review.txt"
 
+          # The verify step is this script and nothing else. Exit 0 = PASS/WARN,
+          # 1 = BLOCK, 2 = no usable verdict.
           STATUS=0
           python scripts/parse_review_verdict.py --reviewer "$ROLE" \
             < "$RUNNER_TEMP/review.txt" > "$RUNNER_TEMP/parsed.txt" || STATUS=$?
@@ -719,10 +888,23 @@ jobs:
           tail -n +3 "$RUNNER_TEMP/parsed.txt" > "$RUNNER_TEMP/comment.md"
           echo "verdict: ${SEVERITY:-<none>}"
 
-          if [ -s "$RUNNER_TEMP/comment.md" ]; then
-            MARKER="<!-- review-$ROLE -->"
-            EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-              | jq -r --arg m "$MARKER" '.[] | select(.body | startswith($m)) | .id' | tail -1) || EXISTING=""
+          # One comment per role, EDITED on re-run. Three reviewers times every
+          # push is how a PR becomes unreadable; the workflow-change guard and
+          # the spec-conformance gate each learned this separately.
+          #
+          # A PASS never OPENS a thread -- a clean review is silent. But it does
+          # EDIT one this role opened earlier, because otherwise a BLOCK comment
+          # outlives the push that fixed it: the PR keeps a comment saying it
+          # cannot merge while it merges, and `/agent retry` feeds the next agent
+          # a finding no reviewer can retract. A verdict that cannot be withdrawn
+          # is not a verdict. Caught by this gate on its own first run.
+          MARKER="<!-- review-$ROLE -->"
+          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            | jq -r --arg m "$MARKER" '.[] | select(.body | startswith($m)) | .id' | tail -1) || EXISTING=""
+          WRITE=true
+          [ -s "$RUNNER_TEMP/comment.md" ] || WRITE=false
+          [ "$SEVERITY" != "PASS" ] || [ -n "$EXISTING" ] || WRITE=false
+          if [ "$WRITE" = "true" ]; then
             # Writing the comment is best-effort; the exit code below is the
             # gate. A GitHub hiccup must not turn a WARN into a merge-block, and
             # a PATCH against a comment someone deleted falls back to a POST.

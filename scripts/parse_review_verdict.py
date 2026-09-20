@@ -131,16 +131,21 @@ def _bullets(findings: list[Finding], bucket: str) -> list[str]:
 def build_comment(verdict: ParsedVerdict) -> str:
     """Render the PR comment body for a successfully parsed verdict.
 
+    EVERY severity gets a body, PASS included. PASS returning "" was a real
+    defect, caught by this gate on its own first run: the CI step only writes
+    when the body is non-empty, so the BLOCK comment from the previous push
+    survived the push that fixed it. The PR then carried a comment saying "this
+    PR does not auto-merge" while auto-merging, and the retry prompt fed the
+    resolved finding back to the next agent as a live BLOCKING line. A verdict
+    that cannot be retracted is not a verdict. The caller still declines to
+    OPEN a thread on a clean review -- see the PASS branch in ci.yml.
+
     Args:
         verdict: The parsed verdict, whose `reviewer` names the role
 
     Returns:
-        Markdown beginning with the per-role marker comment, or the empty
-        string for PASS -- a silent pass posts nothing
+        Markdown beginning with the per-role marker comment
     """
-    if verdict.severity == "PASS":
-        return ""
-
     blocking = _bullets(verdict.findings, "bad")
     warnings = _bullets(verdict.findings, "ugly")
 
@@ -151,16 +156,26 @@ def build_comment(verdict: ParsedVerdict) -> str:
         "",
     ]
 
+    if verdict.severity == "PASS":
+        lines += [
+            "Nothing blocking and nothing to warn about at this head. Any finding "
+            "this reviewer raised on an earlier push is retracted by this comment.",
+            "",
+        ]
+        return "\n".join(lines)
+
     if verdict.severity == "BLOCK":
         lines += [
             "A BLOCK is a hard merge-fail. This PR does not auto-merge. The ways "
             "past it are a push that re-reviews clean, or a human merging it by hand.",
             "",
-            "**BLOCKING**",
-            "",
-            *blocking,
-            "",
         ]
+
+    # Rendered whenever they exist, not only under BLOCK. The contract permits
+    # WARN alongside BLOCKING lines and the parser keeps them, so gating this on
+    # the severity dropped the highest-severity line in the review.
+    if blocking:
+        lines += ["**BLOCKING**", "", *blocking, ""]
 
     if warnings:
         lines += ["**WARNINGS**", "", *warnings, ""]

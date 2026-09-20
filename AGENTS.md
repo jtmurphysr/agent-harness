@@ -334,6 +334,23 @@ gh api "repos/$repo/issues/$n/comments" -q '.[].body'
 `gh pr create`, `gh pr diff` and `gh issue list` are fine. It is the `--json`
 flag on `view` that crosses into GraphQL.
 
+### ⚠️ LESSON 16: A verdict you cannot retract is not a verdict
+
+The reviewer jobs post findings as one comment per role, edited on re-run. The
+first version rendered an empty body for `PASS`, and the CI step wrote only a
+non-empty body — so a `BLOCK` comment survived the push that fixed it. The PR
+then carried a comment saying "this PR does not auto-merge" while auto-merging,
+and `/agent retry`, which is instructed to address every BLOCKING line in every
+`review-*` comment, replayed a resolved finding as a live one. The gate caught
+this on its own first run, on the PR that introduced it.
+
+The rule generalises past comments. **Any state a check writes about a commit
+must be rewritable by that same check on the next commit, the clean case
+included.** "Nothing to say" is a thing to say when something was said before.
+Whenever you add a check that writes where a human or an agent will read it — a
+comment, a label, a status, a file — write the retraction path in the same
+change and test it. Silence on the happy path leaves the last bad news standing.
+
 ---
 
 ## Definition of Done

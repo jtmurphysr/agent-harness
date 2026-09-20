@@ -360,8 +360,10 @@ jobs:
             reviewers (review-engineer / review-architect / review-sre) and to the
             spec-conformance gate. A body that says only "Implements Issue #N" gives a
             reviewer judging claim-against-diff no claims to judge, and gives the
-            `claimed-not-changed` check nothing to check. Write it to a file in exactly
-            this shape, then pass it with --body-file:
+            `claimed-not-changed` check nothing to check. Write it, in exactly the shape
+            below, to a file OUTSIDE the worktree — /tmp/pr-body.md, never a path inside
+            the repository. A body file you commit is a path outside the issue's FILES
+            sections and fails the scope check. Then pass it with --body-file:
 
             Closes #${ISSUE_NUM}
 
@@ -387,7 +389,7 @@ jobs:
 
             gh pr create \
               --title "Issue #${ISSUE_NUM}: $(gh issue view ${ISSUE_NUM} --repo ${{ github.repository }} --json title -q '.title')" \
-              --body-file <the file you wrote> \
+              --body-file /tmp/pr-body.md \
               --head "$BRANCH" \
               --base main \
               --repo ${{ github.repository }} \

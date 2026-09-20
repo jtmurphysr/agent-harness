@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from renderer.validators import ProjectContextError
+from reviewers.verdicts import Finding, ParsedVerdict
 from scripts.parse_review_verdict import (
     EXIT_BLOCK,
     EXIT_OK,
@@ -145,9 +146,14 @@ class TestExitCodes:
 
         out = capsys.readouterr().out
         assert out.splitlines()[0] == "PASS"
-        # A silent pass posts nothing -- there is no comment body after the
-        # severity line and its blank separator.
-        assert out == "PASS\n\n"
+        # A PASS still renders a body, and the body RETRACTS. Returning "" here
+        # left a BLOCK comment alive through the push that fixed it, because the
+        # CI step only writes a non-empty body. Declining to OPEN a thread on a
+        # clean review is the caller's job, not this function's.
+        assert marker("engineer") in out
+        assert "retracted" in out
+        assert "**BLOCKING**" not in out
+        assert "**WARNINGS**" not in out
 
     def test_warn_verdict_exits_zero_and_prints_warnings(
         self, monkeypatch: pytest.MonkeyPatch, context: Path, capsys: pytest.CaptureFixture[str]
@@ -311,9 +317,8 @@ class TestInvariantLoading:
 class TestCommentBody:
     """build_comment() is what a retrying agent reads."""
 
-    def test_pass_renders_nothing(self) -> None:
-        from reviewers.verdicts import ParsedVerdict
-
+    def test_pass_renders_a_retraction(self) -> None:
+        """PASS must be able to withdraw the role's earlier BLOCK."""
         verdict = ParsedVerdict(
             reviewer="sre",
             severity="PASS",
@@ -323,7 +328,48 @@ class TestCommentBody:
             closing_question=None,
             findings=[],
         )
-        assert build_comment(verdict) == ""
+
+        body = build_comment(verdict)
+
+        assert body.startswith(marker("sre"))
+        assert "retracted" in body
+        # Nothing in a PASS body may read as a live finding: `/agent retry`
+        # tells the next agent to address every BLOCKING line it can see.
+        assert "**BLOCKING**" not in body
+        assert "hard merge-fail" not in body
+
+    def test_warn_carrying_blocking_findings_renders_them(self) -> None:
+        """The contract allows WARN alongside BLOCKING lines; they are not dropped.
+
+        Gating the BLOCKING section on `severity == "BLOCK"` silently discarded
+        the highest-severity line in such a review — from the comment and from
+        the log both.
+        """
+        verdict = ParsedVerdict(
+            reviewer="architect",
+            severity="WARN",
+            good=None,
+            bad=None,
+            ugly=None,
+            closing_question=None,
+            findings=[
+                Finding(
+                    bucket="bad",
+                    text="cli imports stonehaven (invariant: layering)",
+                    severity="BLOCK",
+                    invariant_id="layering",
+                ),
+                Finding(bucket="ugly", text="naming drift", severity="WARN", invariant_id=None),
+            ],
+        )
+
+        body = build_comment(verdict)
+
+        assert "**BLOCKING**" in body
+        assert "cli imports stonehaven" in body
+        assert "**WARNINGS**" in body
+        # It is still a WARN: it must not claim to stop the merge.
+        assert "hard merge-fail" not in body
 
     def test_block_with_no_warnings_omits_the_warnings_heading(
         self, monkeypatch: pytest.MonkeyPatch, context: Path, capsys: pytest.CaptureFixture[str]
@@ -382,4 +428,5 @@ class TestInvokedAsCi:
         result = self._run(PASS_REVIEW)
 
         assert result.returncode == EXIT_OK
-        assert result.stdout == "PASS\n\n"
+        assert result.stdout.splitlines()[0] == "PASS"
+        assert marker("sre") in result.stdout
