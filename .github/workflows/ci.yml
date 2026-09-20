@@ -141,6 +141,74 @@ jobs:
       # human-review issue the moment its predecessor merged (issue #26).
       - name: Test holding-label gate
         run: scripts/test-refuse-held-issue.sh
+      # Not a fail-open bug this time -- a set of questions that were being put
+      # to a reviewer and have deterministic answers (issue #28). Same contract
+      # as the two above: one line of stdout, exit 0 for every verdict.
+      - name: Test spec-conformance gate
+        run: scripts/test-check-spec-conformance.sh
+
+  # Does the PR deliver the issue it was dispatched on? Every question here is
+  # mechanical -- the closing keyword names the dispatched issue, the changed
+  # files are inside the issue's FILES sections, the named acceptance tests
+  # exist, the paths the body claims are paths the diff touches. A reviewer was
+  # being asked these and would sometimes say yes; a script says no (issue #28).
+  #
+  # Skipped for PRs without `agent-task`: human PRs are not dispatched from a
+  # spec, so there is nothing to conform to. auto-merge requires this job to
+  # have SUCCEEDED, not merely not-failed, so a skip does not open the door.
+  spec-conformance:
+    name: Spec Conformance
+    runs-on: ubuntu-latest
+    needs: check-project
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'agent-task')
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check PR against its dispatched issue
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          # A non-zero exit means the GATE broke, not that the PR failed. Keep
+          # the two distinguishable in the log; both stop the merge.
+          if ! verdict=$(scripts/check-spec-conformance.sh "$REPO" "$PR"); then
+            echo "::error::check-spec-conformance.sh failed to run. Treating as not conforming."
+            exit 1
+          fi
+          echo "verdict: $verdict"
+          if [ "$verdict" = "pass" ]; then
+            exit 0
+          fi
+
+          # Post the reason so `/agent retry` has something to read. Idempotent:
+          # re-runs on the same PR with the same verdict must not stack
+          # comments (the workflow-change guard learned this the noisy way).
+          marker='<!-- spec-conformance -->'
+          existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate -q '.[].body' || true)
+          if printf '%s\n' "$existing" | grep -Fq "$marker: $verdict"; then
+            echo "Already reported."
+          else
+            {
+              echo "$marker: $verdict"
+              echo
+              echo '**Spec Conformance:** this PR does not conform to the issue it was dispatched on.'
+              echo
+              echo '```'
+              echo "$verdict"
+              echo '```'
+              echo
+              echo 'Reasons: `no-closing-keyword` the body carries no closing keyword; `closes-mismatch` it closes an issue other than the one the branch was dispatched for; `scope <path>` that path is outside the issue'"'"'s FILES sections; `missing-test <name>` an ACCEPTANCE CRITERIA test is in neither the diff nor the tree; `claimed-not-changed <path>` the body backticks a path the diff does not touch; `unresolved <reason>` the question could not be answered, which fails closed.'
+              echo
+              echo 'Auto-merge is blocked until this reads `pass`.'
+            } > "$RUNNER_TEMP/spec-comment.md"
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/spec-comment.md" >/dev/null
+          fi
+          echo "::error::Spec conformance: $verdict"
+          exit 1
 
   lint:
     name: Lint & Types
@@ -209,11 +277,16 @@ jobs:
   auto-merge:
     name: Auto-merge
     runs-on: ubuntu-latest
-    needs: [check-project, workflow-guard, harness-lint, hook-tests, lint, test]
+    needs: [check-project, workflow-guard, harness-lint, hook-tests, spec-conformance, lint, test]
     # hook-tests sits alongside harness-lint, OUTSIDE the has_project branch:
     # the hook guards do not depend on a project existing, and a guard that
     # cannot block a merge is a report, not a gate. Without this clause an
     # agent-authored PR that broke a fail-closed hook would auto-merge green.
+    #
+    # spec-conformance is required to have SUCCEEDED. It is skipped on PRs
+    # without `agent-task`, and `skipped` is not `success`, so an agent PR that
+    # loses the label race cannot merge on the actor clause alone with the
+    # scope check never having run (invariant: gate_fails_closed).
     #
     # workflow-guard is checked TWICE: via the human-review label it applies,
     # and via its output directly. The label is what a human sees; the output
@@ -232,6 +305,7 @@ jobs:
       needs.workflow-guard.outputs.touches_workflows != 'true' &&
       needs.harness-lint.result == 'success' &&
       needs.hook-tests.result == 'success' &&
+      needs.spec-conformance.result == 'success' &&
       (
         needs.check-project.outputs.has_project == 'false' ||
         (

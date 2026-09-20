@@ -109,6 +109,7 @@ class TestTemplates:
             "_shared/posture_directives.partial.md",
             "_shared/output_contract.partial.md",
             "_shared/refusal_conditions.partial.md",
+            "_shared/verdict_block.partial.md",
         ]
 
         for template_name in ["engineer", "architect", "sre"]:
@@ -121,6 +122,22 @@ class TestTemplates:
                 assert re.search(include_pattern, content), (
                     f"{template_name}.template.md must include {expected_include}"
                 )
+
+    def test_templates_end_with_the_verdict_block(self):
+        """The verdict block must be the LAST thing in every reviewer template.
+
+        Position is the instruction: the parser takes the last VERDICT line in a
+        response, and a reviewer asked for the block in the middle of a prompt
+        answers in the middle of a review. Anything after it in the template is
+        something the reviewer reads after being told to stop writing.
+        """
+        for template_name in ["engineer", "architect", "sre"]:
+            _, content = self._load_template(template_name)
+            last_include = re.findall(r"\{%\s*include\s+['\"]([^'\"]+)['\"]\s*%\}", content)[-1]
+            assert last_include == "_shared/verdict_block.partial.md", (
+                f"{template_name}.template.md must end with the verdict block include, "
+                f"not {last_include}"
+            )
 
     def test_templates_contain_jinja2_variables(self):
         """Test that all templates contain Jinja2 variable injection points."""

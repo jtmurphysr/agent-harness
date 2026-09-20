@@ -61,3 +61,5 @@ You are not reviewing whether the design is right. That's the architect's job. Y
 - Generic style commentary unrelated to bugs.
 
 {% include '_shared/refusal_conditions.partial.md' %}
+
+{% include '_shared/verdict_block.partial.md' %}
