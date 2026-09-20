@@ -258,6 +258,40 @@ jobs:
             fi
 
             Never commit or push to main.
+
+            WRITE A PR BODY WORTH REVIEWING. Your PR body is the input to three machine
+            reviewers (review-engineer / review-architect / review-sre) and to the
+            spec-conformance gate. A body that says only "Implements Issue #N" gives a
+            reviewer judging claim-against-diff no claims to judge, and gives the
+            `claimed-not-changed` check nothing to check. Write it in exactly this shape:
+
+            Closes #${ISSUE_NUM}
+
+            ## What
+            <one paragraph: what this PR does, in terms of the issue's CONTEXT>
+
+            ## Files
+            - `path` — what changed and why (one line each; every path here must be in the diff)
+
+            ## Verified
+            <the five-step sequence result, test counts, anything run by hand>
+
+            ## Not done / out of scope
+            <anything from the issue left undone, and why — or "nothing">
+
+            Two rules the gates enforce on that body:
+            - The closing keyword stays FIRST and names YOUR issue and no other.
+              close-issue-on-merge.yml and the spec-conformance gate both act on the
+              first one in the body, and under auto-merge nobody reads it before GitHub
+              does. For any other issue your PR advances, write `Refs #N` instead.
+            - Every backticked path in the prose must be a path your diff touches.
+              The gate fails `claimed-not-changed` on a path you claim and did not change.
+
+            AFTER THE PR IS OPEN — three reviewers run on it, in parallel, blind to each
+            other. A `VERDICT: BLOCK` from any one of them is a HARD MERGE-FAIL: the job
+            fails, auto-merge requires all three to have succeeded, and the PR does not
+            merge. A reviewer that produces no parseable verdict fails the same way. If a
+            review-* job fails, read its comment on the PR and address every BLOCKING line.
       - name: Run Claude Code agent (workflow dispatch)
         if: github.event_name == 'workflow_dispatch'
         uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
@@ -321,17 +355,49 @@ jobs:
             OPENING THE PR — use gh CLI:
             ISSUE_NUM="${{ steps.dep-check.outputs.issue_num }}"
             BRANCH=$(git branch --show-current)
-            gh pr create \
-              --title "Issue #${ISSUE_NUM}: $(gh issue view ${ISSUE_NUM} --repo ${{ github.repository }} --json title -q '.title')" \
-              --body "Implements Issue #${ISSUE_NUM}
+
+            WRITE A BODY WORTH REVIEWING. Your PR body is the input to three machine
+            reviewers (review-engineer / review-architect / review-sre) and to the
+            spec-conformance gate. A body that says only "Implements Issue #N" gives a
+            reviewer judging claim-against-diff no claims to judge, and gives the
+            `claimed-not-changed` check nothing to check. Write it to a file in exactly
+            this shape, then pass it with --body-file:
 
             Closes #${ISSUE_NUM}
 
-            Generated with Claude Code" \
+            ## What
+            <one paragraph: what this PR does, in terms of the issue's CONTEXT>
+
+            ## Files
+            - `path` — what changed and why (one line each; every path here must be in the diff)
+
+            ## Verified
+            <the five-step sequence result, test counts, anything run by hand>
+
+            ## Not done / out of scope
+            <anything from the issue left undone, and why — or "nothing">
+
+            Two rules the gates enforce on that body:
+            - The closing keyword stays FIRST and names YOUR issue and no other.
+              close-issue-on-merge.yml and the spec-conformance gate both act on the
+              first one in the body, and under auto-merge nobody reads it before GitHub
+              does. For any other issue your PR advances, write `Refs #N` instead.
+            - Every backticked path in the prose must be a path your diff touches.
+              The gate fails `claimed-not-changed` on a path you claim and did not change.
+
+            gh pr create \
+              --title "Issue #${ISSUE_NUM}: $(gh issue view ${ISSUE_NUM} --repo ${{ github.repository }} --json title -q '.title')" \
+              --body-file <the file you wrote> \
               --head "$BRANCH" \
               --base main \
               --repo ${{ github.repository }} \
               --label "agent-task"
+
+            AFTER THE PR IS OPEN — three reviewers run on it, in parallel, blind to each
+            other. A `VERDICT: BLOCK` from any one of them is a HARD MERGE-FAIL: the job
+            fails, auto-merge requires all three to have succeeded, and the PR does not
+            merge. A reviewer that produces no parseable verdict fails the same way. If a
+            review-* job fails, read its comment on the PR and address every BLOCKING line.
 
             If a capability is missing:
             - Do NOT approximate or work around it
@@ -621,7 +687,14 @@ jobs:
             SECOND: Read docs/PRD.md to re-ground yourself in the project domain.
             THIRD: Read docs/learnings/ — all files.
             FOURTH: Check if a PR already exists and review CI failures.
-            FIFTH: Diagnose the failure. Fix only what failed. Do not rewrite correct code.
+            FIFTH: Read every comment on the PR from a `review-*` job before touching
+            anything, and address each BLOCKING line or say why it is wrong. Those
+            comments are written by review-engineer / review-architect / review-sre and
+            are the reason a BLOCKed PR did not merge. Disputing a finding does not
+            clear it: the reviewer, not you, decides whether the dispute holds, and the
+            PR still has to re-review clean before it can merge. If you believe a
+            finding is wrong, say so in the PR body and make the change re-reviewable.
+            SIXTH: Diagnose the failure. Fix only what failed. Do not rewrite correct code.
 
             If no branch exists yet for this issue, create one first:
             ISSUE_NUM="${{ github.event.issue.number }}"

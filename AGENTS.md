@@ -350,6 +350,13 @@ A task is complete **only when ALL of the following are true**:
 - [ ] Docstrings on all public functions and classes
 - [ ] PR opened with `gh pr create` — label `agent-task`, body contains `Closes #N`
 - [ ] `docs/` updated if architecture or data contracts changed
+- [ ] **Three reviewer verdicts on the PR.** `review-engineer`, `review-architect`
+      and `review-sre` each run on every `agent-task` PR and each must have
+      SUCCEEDED before auto-merge will fire. A `VERDICT: BLOCK` from any one of
+      them is a **hard merge-fail** — not a label, not a comment to argue with in
+      the PR description. The ways past it are a push that re-reviews clean, or a
+      human merging by hand. A reviewer that produces no parseable verdict fails
+      the same way: it did not review, and that is never read as a pass.
 
 Do not open a PR until every item is checked.
 If CI fails, read the output fully and fix the root cause.

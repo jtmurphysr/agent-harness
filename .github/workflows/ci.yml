@@ -210,6 +210,538 @@ jobs:
           echo "::error::Spec conformance: $verdict"
           exit 1
 
+  # ── The triumvirate ────────────────────────────────────────────────────────
+  #
+  # Three reviewers, three jobs, run in parallel and BLIND TO EACH OTHER by
+  # construction: no shared state, no ordering, no way for one to read another's
+  # verdict. The blind spots being guarded against are the IMPLEMENTING agent's,
+  # not the model's, so three independent passes over the same diff is the point
+  # and not redundancy.
+  #
+  # Until #29 the three definitions in .claude/agents/ had no consumer at all.
+  # They were rendered (#-- render_own_agents.py), validated (Pass 3), and never
+  # loaded by anything. Their catch rate was zero because they never ran.
+  #
+  # BLOCK IS A HARD MERGE-FAIL. It is not a `human-review` application and not a
+  # comment. A BLOCKed PR fails its job, auto-merge requires `success`, and the
+  # only ways past are a push that re-reviews clean or a human merging by hand.
+  # The human path is the escape, not the default.
+  #
+  # A review that produces no parseable verdict ALSO fails the job. A reviewer
+  # that did not produce a verdict did not review, and a gate that reads silence
+  # as approval is a report (invariant: gate_fails_closed).
+  #
+  # Scope is the same as spec-conformance: `agent-task` only. Humans and
+  # compound-learning PRs are not under review by machines.
+  #
+  # The three jobs are near-identical by design. They are written out rather
+  # than expressed as a matrix because auto-merge names each one in `needs` and
+  # requires `result == 'success'` for each; a matrix collapses to one job id,
+  # and one id is one thing to accidentally make optional.
+  #
+  # MODEL: each role's model_class is declared under `reviewers:` in
+  # .factory/project_context.md (code_review / structural_review /
+  # adversarial_review) and resolved by reviewers/models.py. No `--model` is
+  # passed here: this repo ships no model map, so every agent workflow in it
+  # runs on the action default. Pinning a concrete model is a cost knob and
+  # belongs in a model map, not in three copies of a workflow.
+
+  review-engineer:
+    name: Review — Engineer
+    runs-on: ubuntu-latest
+    needs: check-project
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'agent-task')
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      ROLE: engineer
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      # The PR HEAD, not the merge commit: the reviewer judges the commits that
+      # were written, and `git log` on a synthetic merge shows the wrong author
+      # and the wrong parentage. fetch-depth 0 so `git log` and `git diff
+      # origin/main...HEAD` both work inside the agent's tool grant.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - run: git fetch --no-tags origin main:refs/remotes/origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      # Runtime deps only -- the verify step imports reviewers.verdicts and
+      # renderer.validators, neither of which needs the dev extras.
+      - name: Install dependencies
+        run: pip install -e .
+      - name: Assemble reviewer prompt
+        id: prompt
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -uo pipefail
+          # Same authority the spec-conformance gate uses: the branch names the
+          # dispatched issue; the body's first closing keyword is the fallback.
+          ISSUE=$(printf '%s\n' "$BRANCH" | sed -nE 's#^claude/issue-([0-9]+)([-/].*)?$#\1#p' | head -1)
+          PR_BODY=$(gh api "repos/$REPO/pulls/$PR" -q '.body // ""')
+          if [ -z "$ISSUE" ]; then
+            ISSUE=$(printf '%s\n' "$PR_BODY" | grep -ioE 'closes[[:space:]]+#[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+          fi
+          if [ -z "$ISSUE" ]; then
+            echo "::error::review-$ROLE: no dispatched issue resolvable from branch '$BRANCH' or the PR body. A review with no spec to judge against has not been shown to be a review — failing closed."
+            exit 1
+          fi
+          ISSUE_TITLE=$(gh api "repos/$REPO/issues/$ISSUE" -q '.title // ""')
+          ISSUE_BODY=$(gh api "repos/$REPO/issues/$ISSUE" -q '.body // ""')
+
+          gh pr diff "$PR" --repo "$REPO" > "$RUNNER_TEMP/pr.diff"
+          DIFF_NOTE=""
+          if [ "$(wc -c < "$RUNNER_TEMP/pr.diff")" -gt 300000 ]; then
+            head -c 300000 "$RUNNER_TEMP/pr.diff" > "$RUNNER_TEMP/pr.diff.cut"
+            mv "$RUNNER_TEMP/pr.diff.cut" "$RUNNER_TEMP/pr.diff"
+            # Say what was dropped. A silent truncation reads as "you saw it all".
+            DIFF_NOTE="**The diff below is TRUNCATED at 300000 bytes.** Read the remainder with \`git diff origin/main...HEAD\` before you judge coverage or scope."
+            echo "::warning::review-$ROLE: PR diff truncated at 300000 bytes in the prompt."
+          fi
+
+          {
+            # The rendered definition, verbatim. If this file is wrong, the
+            # render → load → review → verdict chain is wrong, and this is
+            # where it shows.
+            cat ".claude/agents/$ROLE.md"
+            echo
+            echo "---"
+            echo
+            echo "# The change you are reviewing"
+            echo
+            echo "Pull request #$PR in \`$REPO\`, at head \`${{ github.event.pull_request.head.sha }}\`."
+            echo "The full working tree is checked out at that commit. The diff below is where to"
+            echo "start, not the limit of what you may read — use Read, Grep, Glob, \`git diff\` and"
+            echo "\`git log\` on anything in the repository. Layering and rollback questions cannot be"
+            echo "answered from a diff alone, which is why you have the tree."
+            echo
+            echo "You are one of three reviewers running in parallel and you cannot see the other two."
+            echo "Review your own dimension. Do not hedge toward what you imagine they will say."
+            echo
+            echo "## Dispatched issue #$ISSUE — $ISSUE_TITLE"
+            echo
+            printf '%s\n' "$ISSUE_BODY"
+            echo
+            echo "## PR body — the claims this change makes about itself"
+            echo
+            printf '%s\n' "$PR_BODY"
+            echo
+            echo "## Diff"
+            echo
+            [ -n "$DIFF_NOTE" ] && { printf '%s\n' "$DIFF_NOTE"; echo; }
+            echo '```diff'
+            cat "$RUNNER_TEMP/pr.diff"
+            echo '```'
+            echo
+            echo "---"
+            echo
+            echo "Your response must END with the verdict block exactly as your definition above"
+            echo "specifies, with no prose after it. It is read literally by a parser: the severity"
+            echo "is the word on the \`VERDICT:\` line and nothing else. A response with no verdict"
+            echo "block fails this job — it is never treated as a PASS. A BLOCK is a hard merge-fail,"
+            echo "so cite it: at least one BLOCKING line must carry (invariant: <id>), (spec: <section>)"
+            echo "or (scope: <section>). A real finding you cannot cite is a WARNINGS line."
+          } > "$RUNNER_TEMP/prompt.md"
+
+          DELIM="PROMPT_$(openssl rand -hex 8)"
+          {
+            echo "prompt<<$DELIM"
+            cat "$RUNNER_TEMP/prompt.md"
+            echo "$DELIM"
+          } >> "$GITHUB_OUTPUT"
+      - name: Run reviewer
+        id: review
+        uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # GH_PAT, never GH_WORKFLOW_PAT: a reviewer reads and comments. It has
+          # no reason to hold a token that can rewrite the workflow gating the
+          # PR it is reviewing.
+          github_token: ${{ secrets.GH_PAT }}
+          # Read-only, but over the WHOLE TREE, not just the diff. Without this
+          # line the agent gets the SDK's read-only default set and nothing
+          # else -- v1 does not read .claude/settings.json. gc-agent.yml ran for
+          # three weeks green, producing nothing, on exactly that omission.
+          claude_args: --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*)"
+          prompt: ${{ steps.prompt.outputs.prompt }}
+      - name: Parse verdict
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          EXEC_FILE: ${{ steps.review.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+          if [ -z "${EXEC_FILE:-}" ] || [ ! -f "$EXEC_FILE" ]; then
+            echo "::error::review-$ROLE produced no execution file. A reviewer that did not run did not review."
+            exit 1
+          fi
+
+          # gc-agent.yml burned three weeks of green runs with 18 denials and no
+          # output. A denial does not fail this job on its own -- a missing
+          # verdict already does -- but it is never allowed to stay buried in
+          # the result JSON.
+          DENIALS=$(jq '[.[] | select(.type == "result")] | last | (.permission_denials // []) | length' "$EXEC_FILE")
+          echo "permission_denials_count: $DENIALS"
+          if [ "$DENIALS" != "0" ]; then
+            echo "::warning::review-$ROLE hit $DENIALS permission denial(s) — the claude_args tool grant is too narrow for what this reviewer tried to read."
+          fi
+
+          jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXEC_FILE" > "$RUNNER_TEMP/review.txt"
+
+          # The verify step is this script and nothing else. Exit 0 = PASS/WARN,
+          # 1 = BLOCK, 2 = no usable verdict.
+          STATUS=0
+          python scripts/parse_review_verdict.py --reviewer "$ROLE" \
+            < "$RUNNER_TEMP/review.txt" > "$RUNNER_TEMP/parsed.txt" || STATUS=$?
+          SEVERITY=$(head -1 "$RUNNER_TEMP/parsed.txt")
+          tail -n +3 "$RUNNER_TEMP/parsed.txt" > "$RUNNER_TEMP/comment.md"
+          echo "verdict: ${SEVERITY:-<none>}"
+
+          # One comment per role, EDITED on re-run. Three reviewers times every
+          # push is how a PR becomes unreadable; the workflow-change guard and
+          # the spec-conformance gate each learned this separately.
+          if [ -s "$RUNNER_TEMP/comment.md" ]; then
+            MARKER="<!-- review-$ROLE -->"
+            EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+              | jq -r --arg m "$MARKER" '.[] | select(.body | startswith($m)) | .id' | tail -1) || EXISTING=""
+            # Writing the comment is best-effort; the exit code below is the
+            # gate. A GitHub hiccup must not turn a WARN into a merge-block, and
+            # a PATCH against a comment someone deleted falls back to a POST.
+            if [ -n "$EXISTING" ] && gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -F body=@"$RUNNER_TEMP/comment.md" >/dev/null; then
+              echo "Edited existing $ROLE comment ($EXISTING)."
+            elif gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/comment.md" >/dev/null; then
+              echo "Posted $ROLE comment."
+            else
+              echo "::warning::review-$ROLE: could not write its findings comment. The verdict below still stands."
+            fi
+          fi
+
+          case "$STATUS" in
+            0) echo "review-$ROLE: $SEVERITY — not blocking." ;;
+            1) echo "::error::review-$ROLE: BLOCK. This is a hard merge-fail; the findings are on the PR." ;;
+            *) echo "::error::review-$ROLE: no usable verdict. Failing closed — a reviewer that did not produce a verdict did not review." ;;
+          esac
+          exit "$STATUS"
+
+  review-architect:
+    name: Review — Architect
+    runs-on: ubuntu-latest
+    needs: check-project
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'agent-task')
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      ROLE: architect
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - run: git fetch --no-tags origin main:refs/remotes/origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: pip install -e .
+      - name: Assemble reviewer prompt
+        id: prompt
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -uo pipefail
+          ISSUE=$(printf '%s\n' "$BRANCH" | sed -nE 's#^claude/issue-([0-9]+)([-/].*)?$#\1#p' | head -1)
+          PR_BODY=$(gh api "repos/$REPO/pulls/$PR" -q '.body // ""')
+          if [ -z "$ISSUE" ]; then
+            ISSUE=$(printf '%s\n' "$PR_BODY" | grep -ioE 'closes[[:space:]]+#[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+          fi
+          if [ -z "$ISSUE" ]; then
+            echo "::error::review-$ROLE: no dispatched issue resolvable from branch '$BRANCH' or the PR body. A review with no spec to judge against has not been shown to be a review — failing closed."
+            exit 1
+          fi
+          ISSUE_TITLE=$(gh api "repos/$REPO/issues/$ISSUE" -q '.title // ""')
+          ISSUE_BODY=$(gh api "repos/$REPO/issues/$ISSUE" -q '.body // ""')
+
+          gh pr diff "$PR" --repo "$REPO" > "$RUNNER_TEMP/pr.diff"
+          DIFF_NOTE=""
+          if [ "$(wc -c < "$RUNNER_TEMP/pr.diff")" -gt 300000 ]; then
+            head -c 300000 "$RUNNER_TEMP/pr.diff" > "$RUNNER_TEMP/pr.diff.cut"
+            mv "$RUNNER_TEMP/pr.diff.cut" "$RUNNER_TEMP/pr.diff"
+            DIFF_NOTE="**The diff below is TRUNCATED at 300000 bytes.** Read the remainder with \`git diff origin/main...HEAD\` before you judge coverage or scope."
+            echo "::warning::review-$ROLE: PR diff truncated at 300000 bytes in the prompt."
+          fi
+
+          {
+            cat ".claude/agents/$ROLE.md"
+            echo
+            echo "---"
+            echo
+            echo "# The change you are reviewing"
+            echo
+            echo "Pull request #$PR in \`$REPO\`, at head \`${{ github.event.pull_request.head.sha }}\`."
+            echo "The full working tree is checked out at that commit. The diff below is where to"
+            echo "start, not the limit of what you may read — use Read, Grep, Glob, \`git diff\` and"
+            echo "\`git log\` on anything in the repository. Layering and rollback questions cannot be"
+            echo "answered from a diff alone, which is why you have the tree."
+            echo
+            echo "You are one of three reviewers running in parallel and you cannot see the other two."
+            echo "Review your own dimension. Do not hedge toward what you imagine they will say."
+            echo
+            echo "## Dispatched issue #$ISSUE — $ISSUE_TITLE"
+            echo
+            printf '%s\n' "$ISSUE_BODY"
+            echo
+            echo "## PR body — the claims this change makes about itself"
+            echo
+            printf '%s\n' "$PR_BODY"
+            echo
+            echo "## Diff"
+            echo
+            [ -n "$DIFF_NOTE" ] && { printf '%s\n' "$DIFF_NOTE"; echo; }
+            echo '```diff'
+            cat "$RUNNER_TEMP/pr.diff"
+            echo '```'
+            echo
+            echo "---"
+            echo
+            echo "Your response must END with the verdict block exactly as your definition above"
+            echo "specifies, with no prose after it. It is read literally by a parser: the severity"
+            echo "is the word on the \`VERDICT:\` line and nothing else. A response with no verdict"
+            echo "block fails this job — it is never treated as a PASS. A BLOCK is a hard merge-fail,"
+            echo "so cite it: at least one BLOCKING line must carry (invariant: <id>), (spec: <section>)"
+            echo "or (scope: <section>). A real finding you cannot cite is a WARNINGS line."
+          } > "$RUNNER_TEMP/prompt.md"
+
+          DELIM="PROMPT_$(openssl rand -hex 8)"
+          {
+            echo "prompt<<$DELIM"
+            cat "$RUNNER_TEMP/prompt.md"
+            echo "$DELIM"
+          } >> "$GITHUB_OUTPUT"
+      - name: Run reviewer
+        id: review
+        uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GH_PAT }}
+          claude_args: --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*)"
+          prompt: ${{ steps.prompt.outputs.prompt }}
+      - name: Parse verdict
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          EXEC_FILE: ${{ steps.review.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+          if [ -z "${EXEC_FILE:-}" ] || [ ! -f "$EXEC_FILE" ]; then
+            echo "::error::review-$ROLE produced no execution file. A reviewer that did not run did not review."
+            exit 1
+          fi
+
+          DENIALS=$(jq '[.[] | select(.type == "result")] | last | (.permission_denials // []) | length' "$EXEC_FILE")
+          echo "permission_denials_count: $DENIALS"
+          if [ "$DENIALS" != "0" ]; then
+            echo "::warning::review-$ROLE hit $DENIALS permission denial(s) — the claude_args tool grant is too narrow for what this reviewer tried to read."
+          fi
+
+          jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXEC_FILE" > "$RUNNER_TEMP/review.txt"
+
+          STATUS=0
+          python scripts/parse_review_verdict.py --reviewer "$ROLE" \
+            < "$RUNNER_TEMP/review.txt" > "$RUNNER_TEMP/parsed.txt" || STATUS=$?
+          SEVERITY=$(head -1 "$RUNNER_TEMP/parsed.txt")
+          tail -n +3 "$RUNNER_TEMP/parsed.txt" > "$RUNNER_TEMP/comment.md"
+          echo "verdict: ${SEVERITY:-<none>}"
+
+          if [ -s "$RUNNER_TEMP/comment.md" ]; then
+            MARKER="<!-- review-$ROLE -->"
+            EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+              | jq -r --arg m "$MARKER" '.[] | select(.body | startswith($m)) | .id' | tail -1) || EXISTING=""
+            # Writing the comment is best-effort; the exit code below is the
+            # gate. A GitHub hiccup must not turn a WARN into a merge-block, and
+            # a PATCH against a comment someone deleted falls back to a POST.
+            if [ -n "$EXISTING" ] && gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -F body=@"$RUNNER_TEMP/comment.md" >/dev/null; then
+              echo "Edited existing $ROLE comment ($EXISTING)."
+            elif gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/comment.md" >/dev/null; then
+              echo "Posted $ROLE comment."
+            else
+              echo "::warning::review-$ROLE: could not write its findings comment. The verdict below still stands."
+            fi
+          fi
+
+          case "$STATUS" in
+            0) echo "review-$ROLE: $SEVERITY — not blocking." ;;
+            1) echo "::error::review-$ROLE: BLOCK. This is a hard merge-fail; the findings are on the PR." ;;
+            *) echo "::error::review-$ROLE: no usable verdict. Failing closed — a reviewer that did not produce a verdict did not review." ;;
+          esac
+          exit "$STATUS"
+
+  review-sre:
+    name: Review — SRE
+    runs-on: ubuntu-latest
+    needs: check-project
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'agent-task')
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      ROLE: sre
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - run: git fetch --no-tags origin main:refs/remotes/origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: pip install -e .
+      - name: Assemble reviewer prompt
+        id: prompt
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -uo pipefail
+          ISSUE=$(printf '%s\n' "$BRANCH" | sed -nE 's#^claude/issue-([0-9]+)([-/].*)?$#\1#p' | head -1)
+          PR_BODY=$(gh api "repos/$REPO/pulls/$PR" -q '.body // ""')
+          if [ -z "$ISSUE" ]; then
+            ISSUE=$(printf '%s\n' "$PR_BODY" | grep -ioE 'closes[[:space:]]+#[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+          fi
+          if [ -z "$ISSUE" ]; then
+            echo "::error::review-$ROLE: no dispatched issue resolvable from branch '$BRANCH' or the PR body. A review with no spec to judge against has not been shown to be a review — failing closed."
+            exit 1
+          fi
+          ISSUE_TITLE=$(gh api "repos/$REPO/issues/$ISSUE" -q '.title // ""')
+          ISSUE_BODY=$(gh api "repos/$REPO/issues/$ISSUE" -q '.body // ""')
+
+          gh pr diff "$PR" --repo "$REPO" > "$RUNNER_TEMP/pr.diff"
+          DIFF_NOTE=""
+          if [ "$(wc -c < "$RUNNER_TEMP/pr.diff")" -gt 300000 ]; then
+            head -c 300000 "$RUNNER_TEMP/pr.diff" > "$RUNNER_TEMP/pr.diff.cut"
+            mv "$RUNNER_TEMP/pr.diff.cut" "$RUNNER_TEMP/pr.diff"
+            DIFF_NOTE="**The diff below is TRUNCATED at 300000 bytes.** Read the remainder with \`git diff origin/main...HEAD\` before you judge coverage or scope."
+            echo "::warning::review-$ROLE: PR diff truncated at 300000 bytes in the prompt."
+          fi
+
+          {
+            cat ".claude/agents/$ROLE.md"
+            echo
+            echo "---"
+            echo
+            echo "# The change you are reviewing"
+            echo
+            echo "Pull request #$PR in \`$REPO\`, at head \`${{ github.event.pull_request.head.sha }}\`."
+            echo "The full working tree is checked out at that commit. The diff below is where to"
+            echo "start, not the limit of what you may read — use Read, Grep, Glob, \`git diff\` and"
+            echo "\`git log\` on anything in the repository. Layering and rollback questions cannot be"
+            echo "answered from a diff alone, which is why you have the tree."
+            echo
+            echo "You are one of three reviewers running in parallel and you cannot see the other two."
+            echo "Review your own dimension. Do not hedge toward what you imagine they will say."
+            echo
+            echo "## Dispatched issue #$ISSUE — $ISSUE_TITLE"
+            echo
+            printf '%s\n' "$ISSUE_BODY"
+            echo
+            echo "## PR body — the claims this change makes about itself"
+            echo
+            printf '%s\n' "$PR_BODY"
+            echo
+            echo "## Diff"
+            echo
+            [ -n "$DIFF_NOTE" ] && { printf '%s\n' "$DIFF_NOTE"; echo; }
+            echo '```diff'
+            cat "$RUNNER_TEMP/pr.diff"
+            echo '```'
+            echo
+            echo "---"
+            echo
+            echo "Your response must END with the verdict block exactly as your definition above"
+            echo "specifies, with no prose after it. It is read literally by a parser: the severity"
+            echo "is the word on the \`VERDICT:\` line and nothing else. A response with no verdict"
+            echo "block fails this job — it is never treated as a PASS. A BLOCK is a hard merge-fail,"
+            echo "so cite it: at least one BLOCKING line must carry (invariant: <id>), (spec: <section>)"
+            echo "or (scope: <section>). A real finding you cannot cite is a WARNINGS line."
+          } > "$RUNNER_TEMP/prompt.md"
+
+          DELIM="PROMPT_$(openssl rand -hex 8)"
+          {
+            echo "prompt<<$DELIM"
+            cat "$RUNNER_TEMP/prompt.md"
+            echo "$DELIM"
+          } >> "$GITHUB_OUTPUT"
+      - name: Run reviewer
+        id: review
+        uses: anthropics/claude-code-action@3a122873511595739e21e685a5bc0fad9638e250  # v1.0.201
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GH_PAT }}
+          claude_args: --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*)"
+          prompt: ${{ steps.prompt.outputs.prompt }}
+      - name: Parse verdict
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          EXEC_FILE: ${{ steps.review.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+          if [ -z "${EXEC_FILE:-}" ] || [ ! -f "$EXEC_FILE" ]; then
+            echo "::error::review-$ROLE produced no execution file. A reviewer that did not run did not review."
+            exit 1
+          fi
+
+          DENIALS=$(jq '[.[] | select(.type == "result")] | last | (.permission_denials // []) | length' "$EXEC_FILE")
+          echo "permission_denials_count: $DENIALS"
+          if [ "$DENIALS" != "0" ]; then
+            echo "::warning::review-$ROLE hit $DENIALS permission denial(s) — the claude_args tool grant is too narrow for what this reviewer tried to read."
+          fi
+
+          jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXEC_FILE" > "$RUNNER_TEMP/review.txt"
+
+          STATUS=0
+          python scripts/parse_review_verdict.py --reviewer "$ROLE" \
+            < "$RUNNER_TEMP/review.txt" > "$RUNNER_TEMP/parsed.txt" || STATUS=$?
+          SEVERITY=$(head -1 "$RUNNER_TEMP/parsed.txt")
+          tail -n +3 "$RUNNER_TEMP/parsed.txt" > "$RUNNER_TEMP/comment.md"
+          echo "verdict: ${SEVERITY:-<none>}"
+
+          if [ -s "$RUNNER_TEMP/comment.md" ]; then
+            MARKER="<!-- review-$ROLE -->"
+            EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+              | jq -r --arg m "$MARKER" '.[] | select(.body | startswith($m)) | .id' | tail -1) || EXISTING=""
+            # Writing the comment is best-effort; the exit code below is the
+            # gate. A GitHub hiccup must not turn a WARN into a merge-block, and
+            # a PATCH against a comment someone deleted falls back to a POST.
+            if [ -n "$EXISTING" ] && gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -F body=@"$RUNNER_TEMP/comment.md" >/dev/null; then
+              echo "Edited existing $ROLE comment ($EXISTING)."
+            elif gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/comment.md" >/dev/null; then
+              echo "Posted $ROLE comment."
+            else
+              echo "::warning::review-$ROLE: could not write its findings comment. The verdict below still stands."
+            fi
+          fi
+
+          case "$STATUS" in
+            0) echo "review-$ROLE: $SEVERITY — not blocking." ;;
+            1) echo "::error::review-$ROLE: BLOCK. This is a hard merge-fail; the findings are on the PR." ;;
+            *) echo "::error::review-$ROLE: no usable verdict. Failing closed — a reviewer that did not produce a verdict did not review." ;;
+          esac
+          exit "$STATUS"
+
   lint:
     name: Lint & Types
     runs-on: ubuntu-latest
@@ -277,7 +809,17 @@ jobs:
   auto-merge:
     name: Auto-merge
     runs-on: ubuntu-latest
-    needs: [check-project, workflow-guard, harness-lint, hook-tests, spec-conformance, lint, test]
+    needs:
+      - check-project
+      - workflow-guard
+      - harness-lint
+      - hook-tests
+      - spec-conformance
+      - review-engineer
+      - review-architect
+      - review-sre
+      - lint
+      - test
     # hook-tests sits alongside harness-lint, OUTSIDE the has_project branch:
     # the hook guards do not depend on a project existing, and a guard that
     # cannot block a merge is a report, not a gate. Without this clause an
@@ -292,6 +834,16 @@ jobs:
     # and via its output directly. The label is what a human sees; the output
     # is what holds if the label write failed. Both must say "no workflow
     # change" for an agent PR to merge itself.
+    #
+    # The three reviewers are each required to have SUCCEEDED, for the same
+    # reason spec-conformance is: they are skipped on PRs without `agent-task`,
+    # and `skipped` is not `success`. A skipped reviewer on an agent PR is a
+    # bug, not a pass. `!= 'failure'` would also swallow `cancelled`, which is
+    # how a timed-out review would merge itself (invariant: gate_fails_closed).
+    #
+    # This is where BLOCK becomes a hard merge-fail: a BLOCKing reviewer exits
+    # its job non-zero, `result` is `failure`, and no label, actor or override
+    # in this expression can get past it. A human merging by hand is the escape.
     if: |
       always() &&
       github.event_name == 'pull_request' &&
@@ -306,6 +858,9 @@ jobs:
       needs.harness-lint.result == 'success' &&
       needs.hook-tests.result == 'success' &&
       needs.spec-conformance.result == 'success' &&
+      needs.review-engineer.result == 'success' &&
+      needs.review-architect.result == 'success' &&
+      needs.review-sre.result == 'success' &&
       (
         needs.check-project.outputs.has_project == 'false' ||
         (

@@ -66,6 +66,8 @@ sharp_edges:
     fix: "Agents push with GH_WORKFLOW_PAT. ci.yml's workflow-guard job applies human-review to any PR touching a workflow file and auto-merge checks its output directly. An agent may propose a change to the rules; it may not land one alone."
 
 structural_decisions:
+  - decision: "A reviewer BLOCK is a hard merge-fail, not a human-review label."
+    rationale: "The three reviewers run as CI jobs on every agent-task PR and auto-merge requires all three to have SUCCEEDED. A BLOCK fails its job, so no label, actor or override in the auto-merge expression can get past it. The alternative considered was applying human-review on BLOCK, which routes every block to a person and makes the human the default path rather than the escape; it also degrades silently the moment a label write fails. The ways past a BLOCK are a push that re-reviews clean, or a human merging by hand. A review that produces no parseable verdict fails the same way and for the same reason: a reviewer that did not produce a verdict did not review, and reading silence as approval is what makes a gate a report."
   - decision: "The harness renders its own reviewers from its own templates."
     rationale: "Until 2026-09-18 the harness shipped a rendering pipeline it never used on itself; its own agent definitions were stale hand copies. A generator that does not consume its own output cannot notice when that output is wrong."
   - decision: "Harness lessons live in AGENTS.md as rules; case histories live in docs/learnings/."
