@@ -41,6 +41,34 @@ class TestSharedPartials:
             "Output contract must document invariant citation syntax"
         )
 
+    def test_verdict_block_partial_valid(self):
+        """The verdict block is the parser's contract; it must state it literally.
+
+        reviewers/verdicts.py reads this shape character by character. If the
+        partial and the parser drift, reviewers write one thing and the pipeline
+        reads another -- which is the state #28 existed to end.
+        """
+        verdict_block_path = self.shared_dir / "verdict_block.partial.md"
+        assert verdict_block_path.exists(), "verdict_block.partial.md must exist"
+
+        content = verdict_block_path.read_text()
+
+        # The literal block, line by line.
+        for line in ("## Verdict", "VERDICT: PASS | WARN | BLOCK", "BLOCKING:", "WARNINGS:"):
+            assert line in content, f"Verdict block must contain the literal line: {line}"
+
+        # The three citation forms the parser accepts.
+        for citation in ("(invariant: <id>", "spec: <section>", "scope: <issue section>"):
+            assert citation in content, f"Verdict block must document citation form: {citation}"
+
+        # The rules the parser enforces must be stated where the reviewer reads them.
+        assert "required" in content.lower(), "Must state that the VERDICT line is required"
+        assert "parse failure" in content.lower(), "Must state what a violation costs"
+        assert "never as a PASS" in content, (
+            "Must state that a parse failure is not a PASS -- a reviewer must not "
+            "be able to pass a change by going silent"
+        )
+
     def test_refusal_conditions_partial_valid(self):
         """Test that refusal_conditions.partial.md contains security refusal patterns."""
         refusal_conditions_path = self.shared_dir / "refusal_conditions.partial.md"

@@ -1,8 +1,36 @@
-"""Tests for reviewers.verdicts module."""
+"""Tests for reviewers.verdicts module.
+
+Every case here is written against the verdict contract in
+templates/_shared/verdict_block.partial.md. The parser reads that block
+literally; the two failure modes this file exists to hold shut are:
+
+  - a reviewer that says nothing being read as a PASS, and
+  - severity being inferred from prose, in either direction.
+
+Before #28 both happened: "nothing critical here" parsed as BLOCK because the
+word "critical" was in the Bad section, and "this deletes the ledger on restart"
+parsed as WARN because it avoided every keyword in the table.
+"""
+
+import inspect
 
 import pytest
 
+import reviewers.verdicts as verdicts_module
 from reviewers.verdicts import Finding, ParsedVerdict, VerdictParseError, VerdictParser
+
+INVARIANTS = ["auth_required", "soft_delete_filter", "data_validation"]
+
+
+def verdict_block(
+    verdict: str, blocking: list[str] | None = None, warnings: list[str] | None = None
+) -> str:
+    """Build a well-formed verdict block for use inside a test response."""
+    lines = ["## Verdict", f"VERDICT: {verdict}", "BLOCKING:"]
+    lines.extend(f"- {item}" for item in blocking or [])
+    lines.append("WARNINGS:")
+    lines.extend(f"- {item}" for item in warnings or [])
+    return "\n".join(lines)
 
 
 class TestVerdictParser:
@@ -20,17 +48,18 @@ class TestVerdictParser:
         assert parser.project_invariants == set()
 
 
-class TestParseVerdict:
-    """Test verdict parsing functionality."""
+@pytest.fixture
+def parser() -> VerdictParser:
+    """Create parser with test invariants."""
+    return VerdictParser(list(INVARIANTS))
 
-    @pytest.fixture
-    def parser(self) -> VerdictParser:
-        """Create parser with test invariants."""
-        return VerdictParser(["auth_required", "soft_delete_filter", "data_validation"])
+
+class TestParseVerdict:
+    """The happy paths: a well-formed block parses to what it says."""
 
     def test_parse_verdict_good_bad_ugly_structure(self, parser: VerdictParser) -> None:
-        """Test parsing of Good/Bad/Ugly structured response."""
-        raw_response = """
+        """Prose sections are still captured alongside the declared verdict."""
+        raw_response = f"""
 ## Good
 - Code follows established patterns
 - Tests are included
@@ -45,6 +74,8 @@ class TestParseVerdict:
 
 ## Closing Question
 Have you considered the performance implications of this change?
+
+{verdict_block("WARN", warnings=["Missing type hints in helper functions"])}
 """
         result = parser.parse_verdict(raw_response, "engineer")
 
@@ -62,271 +93,260 @@ Have you considered the performance implications of this change?
             result.closing_question
             == "Have you considered the performance implications of this change?"
         )
-        assert result.severity == "WARN"  # Has issues but not blocking
-        assert len(result.findings) == 3
+        assert result.severity == "WARN"
+        assert [f.text for f in result.findings] == ["Missing type hints in helper functions"]
 
-    def test_parse_verdict_invariant_citations_extracted(self, parser: VerdictParser) -> None:
-        """Test invariant citation extraction from findings."""
-        raw_response = """
-## Bad
-- Authentication bypass detected in login route (invariant: auth_required)
-- Soft-delete filter missing on user query (invariant: soft_delete_filter)
+    def test_parse_verdict_pass_with_empty_lists(self, parser: VerdictParser) -> None:
+        """PASS with both lists empty is the only legal PASS."""
+        result = parser.parse_verdict(verdict_block("PASS"), "architect")
+        assert result.severity == "PASS"
+        assert result.findings == []
 
-## Ugly
-- Data validation skipped on input processing (invariant: data_validation)
-"""
-        result = parser.parse_verdict(raw_response, "sre")
+    def test_parse_verdict_pass_with_labels_omitted(self, parser: VerdictParser) -> None:
+        """A PASS may leave the two labels out entirely."""
+        result = parser.parse_verdict("## Verdict\nVERDICT: PASS\n", "sre")
+        assert result.severity == "PASS"
+        assert result.findings == []
 
-        assert len(result.findings) == 3
+    def test_parse_verdict_block_with_invariant_citation(self, parser: VerdictParser) -> None:
+        """A cited BLOCK parses, and the invariant id lands on the finding."""
+        raw = verdict_block(
+            "BLOCK",
+            blocking=["Auth bypass on the login route (invariant: auth_required)"],
+            warnings=["Helper lacks a docstring"],
+        )
+        result = parser.parse_verdict(raw, "sre")
 
-        # Check first finding
-        auth_finding = next(f for f in result.findings if f.invariant_id == "auth_required")
-        assert auth_finding.bucket == "bad"
-        assert "Authentication bypass detected" in auth_finding.text
-        assert auth_finding.severity == "WARN"
-
-        # Check second finding
-        delete_finding = next(f for f in result.findings if f.invariant_id == "soft_delete_filter")
-        assert delete_finding.bucket == "bad"
-        assert "Soft-delete filter missing" in delete_finding.text
-
-        # Check third finding
-        validation_finding = next(f for f in result.findings if f.invariant_id == "data_validation")
-        assert validation_finding.bucket == "ugly"
-        assert "Data validation skipped" in validation_finding.text
-
-    def test_parse_verdict_invalid_invariant_id_nulled(self, parser: VerdictParser) -> None:
-        """Test that invalid invariant IDs are set to None with warning logged."""
-        raw_response = """
-## Bad
-- Security issue found (invariant: nonexistent_rule)
-- Valid issue (invariant: auth_required)
-"""
-        result = parser.parse_verdict(raw_response, "architect")
-
+        assert result.severity == "BLOCK"
         assert len(result.findings) == 2
 
-        # First finding should have null invariant_id
-        invalid_finding = next(f for f in result.findings if "nonexistent_rule" in f.text)
-        assert invalid_finding.invariant_id is None
+        blocking = [f for f in result.findings if f.severity == "BLOCK"]
+        assert len(blocking) == 1
+        assert blocking[0].bucket == "bad"
+        assert blocking[0].invariant_id == "auth_required"
 
-        # Second finding should have valid invariant_id
-        valid_finding = next(f for f in result.findings if "Valid issue" in f.text)
-        assert valid_finding.invariant_id == "auth_required"
+        warning = next(f for f in result.findings if f.severity == "WARN")
+        assert warning.bucket == "ugly"
+        assert warning.invariant_id is None
 
-    def test_parse_verdict_severity_detection(self, parser: VerdictParser) -> None:
-        """Test severity detection from response content."""
-        # Test BLOCK severity
-        blocking_response = """
-## Bad
-- This change will cause data loss
-- Security vulnerability detected
+    def test_parse_verdict_block_with_spec_citation(self, parser: VerdictParser) -> None:
+        """`spec:` is a citation form; it has no id list to validate against."""
+        raw = verdict_block("BLOCK", blocking=["Response omits the cursor field (spec: §4.2)"])
+        result = parser.parse_verdict(raw, "architect")
+        assert result.severity == "BLOCK"
+        assert result.findings[0].invariant_id is None
 
-## Ugly
-- No major issues
-"""
-        result = parser.parse_verdict(blocking_response, "engineer")
+    def test_parse_verdict_block_with_scope_citation(self, parser: VerdictParser) -> None:
+        """`scope:` cites a named section of the dispatched issue."""
+        raw = verdict_block(
+            "BLOCK", blocking=["Touches renderer/lockfile.py (scope: FILES TO MODIFY)"]
+        )
+        result = parser.parse_verdict(raw, "engineer")
         assert result.severity == "BLOCK"
 
-        # Test WARN severity
-        warning_response = """
-## Bad
-- Minor style issues
-
-## Ugly
-- Performance could be improved
+    def test_parse_verdict_multiline_finding_joined(self, parser: VerdictParser) -> None:
+        """A finding wrapped across lines is one finding."""
+        raw = """## Verdict
+VERDICT: WARN
+BLOCKING:
+WARNINGS:
+- A long finding that wraps
+  across two lines
+- A short one
 """
-        result = parser.parse_verdict(warning_response, "engineer")
-        assert result.severity == "WARN"
-
-        # Test PASS severity
-        passing_response = """
-## Good
-- Excellent implementation
-- All tests pass
-
-## Closing Question
-Any concerns about deployment timing?
-"""
-        result = parser.parse_verdict(passing_response, "engineer")
-        assert result.severity == "PASS"
-
-    def test_parse_verdict_findings_parsed(self, parser: VerdictParser) -> None:
-        """Test finding extraction and normalization."""
-        raw_response = """
-## Bad
-- Issue 1: First problem
-- Issue 2: Second problem with details
-
-## Ugly
-- Critical security flaw requires immediate attention
-- Performance bottleneck detected
-"""
-        result = parser.parse_verdict(raw_response, "sre")
-
-        assert len(result.findings) == 4
-
-        # Check bad findings
-        bad_findings = [f for f in result.findings if f.bucket == "bad"]
-        assert len(bad_findings) == 2
-        assert bad_findings[0].text == "Issue 1: First problem"
-        assert bad_findings[0].severity == "WARN"
-        assert bad_findings[1].text == "Issue 2: Second problem with details"
-
-        # Check ugly findings
-        ugly_findings = [f for f in result.findings if f.bucket == "ugly"]
-        assert len(ugly_findings) == 2
-        assert ugly_findings[0].text == "Critical security flaw requires immediate attention"
-        assert ugly_findings[0].severity == "BLOCK"  # "security" keyword triggers BLOCK
-        assert ugly_findings[1].text == "Performance bottleneck detected"
-
-    def test_parse_verdict_malformed_response(self, parser: VerdictParser) -> None:
-        """Test handling of malformed responses."""
-        malformed_response = "This is not a structured response"
-
-        # Should not raise exception, but should handle gracefully
-        result = parser.parse_verdict(malformed_response, "engineer")
-        assert result.reviewer == "engineer"
-        assert result.good is None
-        assert result.bad is None
-        assert result.ugly is None
-        assert result.closing_question is None
-        assert result.severity == "PASS"  # No findings means PASS
-        assert len(result.findings) == 0
-
-    def test_parse_verdict_missing_sections(self, parser: VerdictParser) -> None:
-        """Test parsing when some sections are missing."""
-        partial_response = """
-## Good
-- Implementation looks solid
-
-## Closing Question
-What about error handling?
-"""
-        result = parser.parse_verdict(partial_response, "architect")
-
-        assert result.good == "- Implementation looks solid"
-        assert result.bad is None
-        assert result.ugly is None
-        assert result.closing_question == "What about error handling?"
-        assert result.severity == "PASS"
-        assert len(result.findings) == 0
-
-    def test_parse_verdict_case_insensitive_sections(self, parser: VerdictParser) -> None:
-        """Test that section headers are case-insensitive."""
-        mixed_case_response = """
-## good
-- This is good
-
-## BAD
-- This is bad
-
-## Ugly
-- This is ugly
-
-## closing question
-What do you think?
-"""
-        result = parser.parse_verdict(mixed_case_response, "engineer")
-
-        assert result.good == "- This is good"
-        assert result.bad == "- This is bad"
-        assert result.ugly == "- This is ugly"
-        assert result.closing_question == "What do you think?"
-
-    def test_parse_verdict_multiline_findings(self, parser: VerdictParser) -> None:
-        """Test parsing of multi-line findings."""
-        multiline_response = """
-## Bad
-- Complex issue that spans
-  multiple lines and needs
-  detailed explanation
-- Simple single line issue
-
-## Ugly
-- Another multi-line finding
-  with continuation
-  across several lines
-"""
-        result = parser.parse_verdict(multiline_response, "engineer")
-
-        assert len(result.findings) == 3
-
-        # Check multi-line finding
-        complex_finding = next(f for f in result.findings if "Complex issue" in f.text)
-        expected_text = "Complex issue that spans multiple lines and needs detailed explanation"
-        assert complex_finding.text == expected_text
-
-        # Check single line finding
-        simple_finding = next(f for f in result.findings if "Simple single line" in f.text)
-        assert simple_finding.text == "Simple single line issue"
-
-    def test_parse_verdict_block_severity_keywords(self, parser: VerdictParser) -> None:
-        """Test that specific keywords trigger BLOCK severity."""
-        block_keywords = [
-            ("breaking change", "BLOCK"),
-            ("security vulnerability", "BLOCK"),
-            ("data loss", "BLOCK"),
-            ("corrupts database", "BLOCK"),
-            ("irreversible", "BLOCK"),
-            ("critical failure", "BLOCK"),
+        result = parser.parse_verdict(raw, "engineer")
+        assert [f.text for f in result.findings] == [
+            "A long finding that wraps across two lines",
+            "A short one",
         ]
 
-        for keyword, expected_severity in block_keywords:
-            response = f"""
-## Bad
-- This change causes {keyword}
-"""
-            result = parser.parse_verdict(response, "sre")
-            assert result.severity == expected_severity, (
-                f"Keyword '{keyword}' should trigger {expected_severity}"
-            )
+    def test_parse_verdict_citation_case_insensitive(self, parser: VerdictParser) -> None:
+        """Citation keys are matched case-insensitively."""
+        raw = verdict_block("BLOCK", blocking=["Issue found (INVARIANT: auth_required)"])
+        result = parser.parse_verdict(raw, "engineer")
+        assert result.findings[0].invariant_id == "auth_required"
 
-    def test_parse_verdict_ugly_block_keywords(self, parser: VerdictParser) -> None:
-        """Test BLOCK keywords in ugly section."""
-        ugly_block_response = """
-## Ugly
-- Security risk in authentication flow
-- Data corruption possible in edge case
-- Production failure likely under load
+    def test_parse_verdict_last_verdict_line_wins(self, parser: VerdictParser) -> None:
+        """A quoted contract above the real block does not decide the verdict."""
+        raw = """Here is the format I was given:
+
+VERDICT: PASS | WARN | BLOCK
+
+And here is my review.
+
+## Verdict
+VERDICT: PASS
 """
-        result = parser.parse_verdict(ugly_block_response, "sre")
+        result = parser.parse_verdict(raw, "engineer")
+        assert result.severity == "PASS"
+
+    def test_parse_verdict_placeholder_bullets_are_not_findings(
+        self, parser: VerdictParser
+    ) -> None:
+        """Echoing the template's `<one finding per line>` is not a finding."""
+        raw = """## Verdict
+VERDICT: PASS
+BLOCKING:
+- <one finding per line> (invariant: <id> | spec: <section> | scope: <issue section>)
+WARNINGS:
+- <one finding per line>
+"""
+        result = parser.parse_verdict(raw, "engineer")
+        assert result.severity == "PASS"
+        assert result.findings == []
+
+
+class TestVerdictContractViolations:
+    """The contract's four parse errors. Each one is a failed review, not a PASS."""
+
+    def test_missing_verdict_line_is_parse_error(self, parser: VerdictParser) -> None:
+        """A review with no VERDICT line cannot be read as anything."""
+        raw = """
+## Good
+- Everything looks fine to me
+
+## Bad
+- Nothing critical here
+
+## Ugly
+- Nothing
+"""
+        with pytest.raises(VerdictParseError, match="no VERDICT: line"):
+            parser.parse_verdict(raw, "engineer")
+
+    def test_unstructured_response_is_parse_error(self, parser: VerdictParser) -> None:
+        """Free prose is a parse error; before #28 it parsed as PASS."""
+        with pytest.raises(VerdictParseError, match="no VERDICT: line"):
+            parser.parse_verdict("This is not a structured response", "engineer")
+
+    def test_echoed_literal_verdict_is_parse_error(self, parser: VerdictParser) -> None:
+        """Leaving `PASS | WARN | BLOCK` in place is a failure, not a PASS."""
+        raw = "## Verdict\nVERDICT: PASS | WARN | BLOCK\nBLOCKING:\nWARNINGS:\n"
+        with pytest.raises(VerdictParseError, match="must be exactly one of"):
+            parser.parse_verdict(raw, "engineer")
+
+    def test_unknown_verdict_word_is_parse_error(self, parser: VerdictParser) -> None:
+        """Only the three legal words are accepted."""
+        raw = "## Verdict\nVERDICT: APPROVE\n"
+        with pytest.raises(VerdictParseError, match="must be exactly one of"):
+            parser.parse_verdict(raw, "engineer")
+
+    def test_block_without_citation_is_parse_error(self, parser: VerdictParser) -> None:
+        """BLOCK on an uncited finding is taste, and taste does not block."""
+        raw = verdict_block("BLOCK", blocking=["I would not have written it this way"])
+        with pytest.raises(VerdictParseError, match="no citable BLOCKING finding"):
+            parser.parse_verdict(raw, "architect")
+
+    def test_block_with_empty_blocking_list_is_parse_error(self, parser: VerdictParser) -> None:
+        """BLOCK must name what it blocks on."""
+        raw = verdict_block("BLOCK", warnings=["Only a warning here"])
+        with pytest.raises(VerdictParseError, match="empty BLOCKING list"):
+            parser.parse_verdict(raw, "sre")
+
+    def test_block_citing_unknown_invariant_is_parse_error(self, parser: VerdictParser) -> None:
+        """A fabricated invariant id is exactly what the citation rule prevents."""
+        raw = verdict_block("BLOCK", blocking=["Security issue (invariant: nonexistent_rule)"])
+        with pytest.raises(VerdictParseError, match="nonexistent_rule"):
+            parser.parse_verdict(raw, "architect")
+
+    def test_warning_citing_unknown_invariant_is_parse_error(self, parser: VerdictParser) -> None:
+        """The id list is validated wherever it is cited, not only under BLOCK."""
+        raw = verdict_block("WARN", warnings=["Minor thing (invariant: made_up_id)"])
+        with pytest.raises(VerdictParseError, match="made_up_id"):
+            parser.parse_verdict(raw, "engineer")
+
+    def test_warn_without_warnings_is_parse_error(self, parser: VerdictParser) -> None:
+        """WARN must name what it warns about."""
+        with pytest.raises(VerdictParseError, match="empty WARNINGS list"):
+            parser.parse_verdict(verdict_block("WARN"), "engineer")
+
+    def test_pass_with_findings_is_parse_error(self, parser: VerdictParser) -> None:
+        """PASS requires both lists empty."""
+        raw = verdict_block("PASS", warnings=["Actually there is a problem"])
+        with pytest.raises(VerdictParseError, match="PASS with"):
+            parser.parse_verdict(raw, "engineer")
+
+    def test_pass_with_the_word_none_as_a_bullet_is_parse_error(
+        self, parser: VerdictParser
+    ) -> None:
+        """The template says so: "none" is a bullet, and a bullet is a finding."""
+        raw = verdict_block("PASS", warnings=["none"])
+        with pytest.raises(VerdictParseError, match="PASS with"):
+            parser.parse_verdict(raw, "engineer")
+
+    def test_empty_citation_value_does_not_count_as_a_citation(self, parser: VerdictParser) -> None:
+        """`(invariant: )` is not a citation, so it cannot license a BLOCK."""
+        raw = verdict_block("BLOCK", blocking=["Something is wrong (invariant: )"])
+        with pytest.raises(VerdictParseError, match="no citable BLOCKING finding"):
+            parser.parse_verdict(raw, "engineer")
+
+    def test_unexpected_error_is_wrapped_as_a_parse_error(
+        self, parser: VerdictParser, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Any failure in here reaches the caller as a parse error, never a PASS."""
+
+        def boom(*_args: object, **_kwargs: object) -> str:
+            raise RuntimeError("regex engine exploded")
+
+        monkeypatch.setattr(parser, "_extract_section", boom)
+        with pytest.raises(VerdictParseError, match="Failed to parse verdict for engineer"):
+            parser.parse_verdict(verdict_block("PASS"), "engineer")
+
+
+class TestSeverityIsDeclaredNotInferred:
+    """The two directions the old keyword table got wrong, held shut."""
+
+    def test_critical_in_prose_does_not_block(self, parser: VerdictParser) -> None:
+        """A Bad section reading "nothing critical here" parsed as BLOCK before #28."""
+        raw = f"""
+## Bad
+- Nothing critical here. No security concerns, no data loss, nothing breaking.
+
+{verdict_block("PASS")}
+"""
+        result = parser.parse_verdict(raw, "engineer")
+        assert result.severity == "PASS"
+
+    def test_real_damage_without_a_keyword_still_blocks(self, parser: VerdictParser) -> None:
+        """A ledger the change deletes on restart parsed as WARN before #28."""
+        raw = f"""
+## Bad
+- This deletes the ledger on restart.
+
+{verdict_block("BLOCK", blocking=["Deletes the ledger on restart (invariant: data_validation)"])}
+"""
+        result = parser.parse_verdict(raw, "sre")
         assert result.severity == "BLOCK"
 
-    def test_parse_verdict_empty_sections_ignored(self, parser: VerdictParser) -> None:
-        """Test that empty sections are treated as None."""
-        empty_sections_response = """
-## Good
-
-## Bad
-- Actual issue here
-
+    def test_ugly_bucket_does_not_promote_severity(self, parser: VerdictParser) -> None:
+        """An Ugly section full of scary words no longer forces BLOCK."""
+        raw = f"""
 ## Ugly
+- Security risk phrasing, data corruption phrasing, production failure phrasing.
 
-
-## Closing Question
+{verdict_block("WARN", warnings=["Phrasing in the docstring is alarming"])}
 """
-        result = parser.parse_verdict(empty_sections_response, "engineer")
-
-        assert result.good is None  # Empty section
-        assert result.bad == "- Actual issue here"
-        assert result.ugly is None  # Empty section
-        assert result.closing_question is None  # Empty section
+        result = parser.parse_verdict(raw, "sre")
         assert result.severity == "WARN"
 
-    def test_parse_verdict_invariant_citation_case_insensitive(self, parser: VerdictParser) -> None:
-        """Test invariant citation parsing is case-insensitive."""
-        response = """
-## Bad
-- Issue found (INVARIANT: auth_required)
-- Another issue (Invariant: soft_delete_filter)
-"""
-        result = parser.parse_verdict(response, "engineer")
 
-        findings_with_invariants = [f for f in result.findings if f.invariant_id is not None]
-        assert len(findings_with_invariants) == 2
-        assert any(f.invariant_id == "auth_required" for f in findings_with_invariants)
-        assert any(f.invariant_id == "soft_delete_filter" for f in findings_with_invariants)
+class TestNoKeywordSeverity:
+    """LESSON 11: forbid the removed mechanism with a test, not a comment."""
+
+    def test_determine_severity_is_gone(self) -> None:
+        """The inferring entry point must not come back."""
+        assert not hasattr(VerdictParser, "_determine_severity")
+
+    def test_no_keyword_table_in_source(self) -> None:
+        """No list of magic words may decide severity in this module again.
+
+        The module docstring names the old keywords so the failure mode stays
+        readable, so this checks for the *mechanism* -- the named table and the
+        function that consulted it -- rather than for the words themselves.
+        """
+        source = inspect.getsource(verdicts_module)
+        for banned in ("block_indicators", "_determine_severity"):
+            assert banned not in source, f"keyword-severity mechanism reintroduced: {banned}"
 
 
 class TestVerdictParseError:

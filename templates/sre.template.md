@@ -72,3 +72,5 @@ You are not reviewing whether the design is right (architect) or whether the cod
 {% if deployment.surface == 'library' %}- Consumer application architecture. Focus on the library boundary.{% endif %}
 
 {% include '_shared/refusal_conditions.partial.md' %}
+
+{% include '_shared/verdict_block.partial.md' %}

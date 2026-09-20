@@ -60,3 +60,5 @@ You are not reviewing whether the code works. That's the engineer's job. You are
 - Micro-optimizations. Focus on structural decisions.
 
 {% include '_shared/refusal_conditions.partial.md' %}
+
+{% include '_shared/verdict_block.partial.md' %}
