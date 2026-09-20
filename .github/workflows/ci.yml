@@ -136,6 +136,11 @@ jobs:
       # "assumed satisfied" on any predecessor it could not resolve (issue #11).
       - name: Test dispatch gate
         run: scripts/test-resolve-predecessor.sh
+      # The ninth. Holding labels were checked in a job-level `if:` that only
+      # the `issues` trigger could satisfy; the auto-advance path dispatched a
+      # human-review issue the moment its predecessor merged (issue #26).
+      - name: Test holding-label gate
+        run: scripts/test-refuse-held-issue.sh
 
   lint:
     name: Lint & Types

@@ -13,15 +13,67 @@ on:
         type: string
 
 jobs:
+  # The holding-label gate, and the ONLY place it lives. Both dispatch jobs
+  # `needs` this one and check its output, the way ci.yml's auto-merge checks
+  # workflow-guard.
+  #
+  # Why a job and not an `if:` clause: the `issues` event carries the issue's
+  # labels in its payload, so the old job-level `if:` could refuse human-review
+  # there. `workflow_dispatch` carries only an issue NUMBER, and that is the
+  # path close-issue-on-merge.yml uses to advance the chain after every merge.
+  # So the label check existed on the path nobody automated and was absent on
+  # the one that fires unattended. On 2026-09-20 downstream, #57 merged and an
+  # agent was dispatched against #58 -- human-review + harness-gap, parked for
+  # a decision -- with only the DEPENDS ON gate in its way (issue #26).
+  #
+  # This job runs on every trigger and reads the labels via REST. If it cannot
+  # read them it FAILS, and a failed `needs` skips both dispatch jobs: a gate
+  # that cannot see its input has not passed. It never edits labels and never
+  # comments -- a held issue is waiting on a human, and the correct response is
+  # a quiet skip in the workflow log, not noise on the issue.
+  refuse-held:
+    name: Holding-label gate
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'issues' && github.event.label.name == 'agent-task') ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/agent retry')) ||
+      github.event_name == 'workflow_dispatch'
+    permissions:
+      issues: read
+    outputs:
+      verdict: ${{ steps.gate.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.issue_number || github.event.issue.number }}
+        run: |
+          set -uo pipefail
+          VERDICT=$(bash scripts/refuse-held-issue.sh "$REPO" "$ISSUE") || {
+            echo "::error::refuse-held-issue.sh failed (exit $?) for #${ISSUE} — gate is broken, not passed. Refusing to dispatch."
+            exit 1
+          }
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+          case "$VERDICT" in
+            clear)  echo "#${ISSUE}: clear to dispatch." ;;
+            held\ *) echo "::notice::#${ISSUE} carries ${VERDICT#held } — not dispatching. A human has not decided yet." ;;
+            *)      echo "::error::unexpected verdict '$VERDICT' — refusing to dispatch."; exit 1 ;;
+          esac
+
   dispatch-on-label:
     name: Dispatch Agent
     runs-on: ubuntu-latest
+    needs: refuse-held
+    # The label conditions that used to sit here are now the refuse-held job
+    # above, which sees both paths. What remains is trigger selection only.
     if: |
-      (github.event_name == 'issues' &&
-      github.event.label.name == 'agent-task' &&
-      !contains(github.event.issue.labels.*.name, 'human-review') &&
-      !contains(github.event.issue.labels.*.name, 'harness-gap')) ||
-      github.event_name == 'workflow_dispatch'
+      needs.refuse-held.outputs.verdict == 'clear' &&
+      (
+        (github.event_name == 'issues' && github.event.label.name == 'agent-task') ||
+        github.event_name == 'workflow_dispatch'
+      )
     permissions:
       contents: write
       pull-requests: write
@@ -436,7 +488,11 @@ jobs:
   dispatch-on-retry:
     name: Retry Agent
     runs-on: ubuntu-latest
+    needs: refuse-held
+    # `/agent retry` never checked human-review either: a retry on an issue a
+    # human had since parked re-ran the agent. Same gate, same job, same reason.
     if: |
+      needs.refuse-held.outputs.verdict == 'clear' &&
       github.event_name == 'issue_comment' &&
       startsWith(github.event.comment.body, '/agent retry') &&
       contains(github.event.issue.labels.*.name, 'agent-task')

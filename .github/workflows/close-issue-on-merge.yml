@@ -74,8 +74,11 @@ jobs:
               return;
             }
 
-            // Dispatch unconditionally — agent-dispatch.yml handles its own dep-check gate.
-            // Issues are created without labels; requiring the label here breaks the chain.
+            // Dispatch unconditionally. agent-dispatch.yml gates BOTH things that can
+            // hold N+1 back: its refuse-held job skips any issue carrying human-review
+            // or harness-gap (on every trigger, this one included -- issue #26), and
+            // its DEPENDS ON check enforces sequence. Issues are created without
+            // labels; requiring agent-task here would break the chain.
             // Dispatch the agent-dispatch workflow for the next issue
             console.log(`Dispatching agent for issue #${nextIssueNumber}...`);
             await github.rest.actions.createWorkflowDispatch({

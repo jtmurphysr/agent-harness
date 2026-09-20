@@ -303,6 +303,17 @@ its one changed file being read. This template now lints `tests/` and `scripts/`
 If a project ever excludes a tree, AGENTS.md must name it and say why; "no
 exceptions" with a silent exception is the defect, not the policy.
 
+### ⚠️ LESSON 14: A gate on one trigger is not a gate
+
+`human-review` blocked dispatch — on the `labeled` event. The auto-advance path
+(`workflow_dispatch` from `close-issue-on-merge.yml`) and `/agent retry` went
+around it, because a job-level `if:` can only read what the payload carries, and
+those payloads carry no labels. The caller said "the dispatcher gates"; the
+dispatcher gated the path the caller never used. A held issue got an agent the
+moment its predecessor merged. **Every gate lives in one job that every trigger
+depends on**, reads its input itself, and fails when it cannot. If a check sits
+in an `if:` expression, ask which events can reach the job without it.
+
 ---
 
 ## Definition of Done
