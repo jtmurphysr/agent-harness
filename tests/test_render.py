@@ -1,5 +1,6 @@
 """Tests for cli/render.py."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -649,3 +650,293 @@ Test project.
 
         # Verify lock file was NOT created
         assert not (output_dir / "templates_lock.yml").exists()
+
+
+REAL_TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+
+# Severities are interleaved on purpose: no role's matches are the first N
+# entries, so a template that numbers with `loop.index` over the unfiltered
+# list prints a gapped sequence (1, 3, 5) instead of 1, 2, 3.
+SHAPE_CONTEXT = """---
+project:
+  name: "shape-fixture"
+  description: "Fixture project used to assert the shape of the rendered output."
+
+stack:
+  language: "python"
+  framework: "fastapi"
+  database: "sqlite"
+  primary_files:
+    high_blast_radius:
+      - "blast/one.py"
+      - "blast/two.py"
+    generated:
+      - "generated/one.py"
+      - "generated/two.py"
+
+deployment:
+  surface: "server"
+  rollback_available: true
+  forced_update: false
+  user_data_recoverable: true
+  production_record_count: 42
+
+invariants:
+  - id: "inv_perf_one"
+    rule: "Invariant perf one."
+    severity: "performance"
+  - id: "inv_correct_one"
+    rule: "Invariant correct one."
+    severity: "correctness"
+  - id: "inv_irrev_one"
+    rule: "Invariant irrev one."
+    severity: "irreversibility"
+  - id: "inv_data_loss_one"
+    rule: "Invariant data loss one."
+    severity: "data_loss"
+  - id: "inv_consistency_one"
+    rule: "Invariant consistency one."
+    severity: "data_consistency"
+  - id: "inv_irrev_two"
+    rule: "Invariant irrev two."
+    severity: "irreversibility"
+  - id: "inv_perf_two"
+    rule: "Invariant perf two."
+    severity: "performance"
+
+sharp_edges:
+  - location: "edge/one.py"
+    issue: "Edge one issue"
+    fix: "Edge one fix"
+  - location: "edge/two.py"
+    issue: "Edge two issue"
+    fix: "Edge two fix"
+  - location: "edge/three.py"
+    issue: "Edge three issue"
+    fix: "Edge three fix"
+
+structural_decisions:
+  - decision: "Decision alpha"
+    rationale: "Rationale alpha"
+  - decision: "Decision beta"
+    rationale: "Rationale beta"
+
+becoming:
+  - "Becoming goal alpha"
+  - "Becoming goal beta"
+
+reviewers:
+  engineer:
+    enabled: true
+    model_class: "code_review"
+  architect:
+    enabled: true
+    model_class: "structural_review"
+  sre:
+    enabled: true
+    model_class: "adversarial_review"
+---
+
+Fixture context for rendered-shape assertions.
+"""
+
+# Which invariants each role's severity filter selects, in source order.
+EXPECTED_INVARIANT_IDS = {
+    "engineer": ["inv_correct_one", "inv_data_loss_one", "inv_consistency_one"],
+    "architect": ["inv_perf_one", "inv_consistency_one", "inv_perf_two"],
+    "sre": ["inv_irrev_one", "inv_data_loss_one", "inv_irrev_two"],
+}
+
+SHARP_EDGE_LOCATIONS = ["edge/one.py", "edge/two.py", "edge/three.py"]
+STRUCTURAL_DECISIONS = ["Decision alpha", "Decision beta"]
+BECOMING_GOALS = ["Becoming goal alpha", "Becoming goal beta"]
+
+INVARIANT_LINE = re.compile(r"^(?P<number>\d+)\. (?P<rule>.+) `\(invariant: (?P<id>[a-z_]+)\)`$")
+
+
+def _lines_with(lines: list[str], needles: list[str]) -> list[str]:
+    """Return the lines that mention at least one of `needles`."""
+    return [line for line in lines if any(needle in line for needle in needles)]
+
+
+def _invariant_ids_on(line: str, invariant_ids: list[str]) -> int:
+    """Count how many of `invariant_ids` are cited on one line."""
+    return sum(f"(invariant: {invariant_id})" in line for invariant_id in invariant_ids)
+
+
+def _invariant_lines(content: str, invariant_ids: list[str]) -> list[str]:
+    """Return the rendered lines citing a fixture invariant.
+
+    Matched by id, not by the `(invariant: ...)` marker alone: the shared output
+    contract partial documents that marker in prose, and those lines are not the
+    list under test.
+    """
+    return [line for line in content.splitlines() if _invariant_ids_on(line, invariant_ids)]
+
+
+class TestRenderedListShape:
+    """The rendered agent files must put one list item on one physical line.
+
+    validate_harness.py Pass 3 diffs .claude/agents/ against a fresh render of the
+    same templates, so it is self-consistent by construction and stayed green while
+    every list in every rendered reviewer was collapsed onto a single line: with
+    trim_blocks on, a block tag at the end of a content line eats that line's
+    newline. These tests read the real templates/ and assert on the shape of what
+    they produce, which is what nothing was doing.
+    """
+
+    @pytest.fixture
+    def rendered(self, tmp_path: Path) -> dict[str, str]:
+        """Render the shipped templates against the shape fixture context."""
+        context_file = tmp_path / "project_context.md"
+        context_file.write_text(SHAPE_CONTEXT)
+        output_dir = tmp_path / "agents"
+
+        render_agents(context_file, REAL_TEMPLATES_DIR, output_dir, update_lock=False)
+
+        return {
+            role: (output_dir / f"{role}.md").read_text(encoding="utf-8")
+            for role in ("engineer", "architect", "sre")
+        }
+
+    @pytest.mark.parametrize("role", ["engineer", "architect", "sre"])
+    def test_invariants_render_one_per_line(self, rendered: dict[str, str], role: str) -> None:
+        """Each invariant this role's filter selects gets its own physical line."""
+        expected_ids = EXPECTED_INVARIANT_IDS[role]
+        invariant_lines = _invariant_lines(rendered[role], expected_ids)
+
+        for line in invariant_lines:
+            assert _invariant_ids_on(line, expected_ids) == 1, (
+                f"{role}: two invariants share one line: {line}"
+            )
+
+        assert len(invariant_lines) == len(expected_ids)
+
+    @pytest.mark.parametrize("role", ["engineer", "architect", "sre"])
+    def test_invariant_numbering_is_contiguous_from_one(
+        self, rendered: dict[str, str], role: str
+    ) -> None:
+        """Numbering counts the filtered subset, not the position in `invariants`."""
+        expected_ids = EXPECTED_INVARIANT_IDS[role]
+        matches = [
+            INVARIANT_LINE.match(line) for line in _invariant_lines(rendered[role], expected_ids)
+        ]
+
+        assert all(matches), f"{role}: an invariant line is not `N. rule (invariant: id)`"
+
+        numbers = [int(m.group("number")) for m in matches if m]
+        ids = [m.group("id") for m in matches if m]
+
+        assert numbers == list(range(1, len(expected_ids) + 1))
+        assert ids == expected_ids
+
+    @pytest.mark.parametrize("role", ["engineer", "architect", "sre"])
+    def test_only_the_roles_severities_are_rendered(
+        self, rendered: dict[str, str], role: str
+    ) -> None:
+        """The severity filter still filters — renumbering did not widen the set."""
+        all_ids = {invariant_id for ids in EXPECTED_INVARIANT_IDS.values() for invariant_id in ids}
+        for invariant_id in all_ids:
+            present = f"(invariant: {invariant_id})" in rendered[role]
+            assert present is (invariant_id in EXPECTED_INVARIANT_IDS[role]), (
+                f"{role}: unexpected presence/absence of {invariant_id}"
+            )
+
+    @pytest.mark.parametrize("role", ["engineer", "sre"])
+    def test_sharp_edges_render_one_per_line(self, rendered: dict[str, str], role: str) -> None:
+        """Each sharp edge gets its own bullet on its own line."""
+        lines = rendered[role].splitlines()
+        edge_lines = _lines_with(lines, SHARP_EDGE_LOCATIONS)
+
+        assert len(edge_lines) == len(SHARP_EDGE_LOCATIONS)
+        for line in edge_lines:
+            assert sum(loc in line for loc in SHARP_EDGE_LOCATIONS) == 1, (
+                f"{role}: two sharp edges share one line: {line}"
+            )
+            assert line.startswith("- "), f"{role}: sharp edge does not start its line: {line}"
+
+    @pytest.mark.parametrize("role", ["engineer", "architect"])
+    def test_structural_decisions_render_one_per_line(
+        self, rendered: dict[str, str], role: str
+    ) -> None:
+        """Each structural decision gets its own bullet on its own line."""
+        lines = rendered[role].splitlines()
+        decision_lines = _lines_with(lines, STRUCTURAL_DECISIONS)
+
+        assert len(decision_lines) == len(STRUCTURAL_DECISIONS)
+        for line in decision_lines:
+            assert sum(text in line for text in STRUCTURAL_DECISIONS) == 1, (
+                f"{role}: two decisions share one line: {line}"
+            )
+            assert line.startswith("- ")
+
+    def test_becoming_goals_render_one_per_line(self, rendered: dict[str, str]) -> None:
+        """Each 12-month-horizon goal gets its own bullet on its own line."""
+        lines = rendered["architect"].splitlines()
+        goal_lines = _lines_with(lines, BECOMING_GOALS)
+
+        assert len(goal_lines) == len(BECOMING_GOALS)
+        for line in goal_lines:
+            assert sum(goal in line for goal in BECOMING_GOALS) == 1
+            assert line.startswith("- ")
+
+    def test_section_headers_stand_alone(self, rendered: dict[str, str]) -> None:
+        """A section header is its own line, with the list starting on the next one."""
+        expected = {
+            "engineer": [
+                "**Critical correctness invariants:**",
+                "**Known sharp edges:**",
+                "**Pass 1 — Correctness checklist:**",
+                "**Pass 2 — Coverage checklist:**",
+            ],
+            "architect": [
+                "**Key abstractions:**",
+                "**What this is becoming (12-month horizon):**",
+                "**Known structural decisions worth preserving:**",
+                "**Critical architectural invariants:**",
+            ],
+            "sre": [
+                "**Production environment:**",
+                "**Critical production invariants:**",
+                "**Known operational pain points:**",
+            ],
+        }
+
+        for role, headers in expected.items():
+            lines = rendered[role].splitlines()
+            for header in headers:
+                assert header in lines, f"{role}: {header} is not on a line of its own"
+
+    def test_engineer_conditional_checklist_bullets_stay_separate(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """Bullets guarded by an `{% if %}` are bullets, not a run-on line."""
+        lines = rendered["engineer"].splitlines()
+
+        assert "- Database queries: parameterized? Required filters present where specified?" in (
+            lines
+        )
+        assert (
+            "- Generated files (generated/one.py, generated/two.py): "
+            "do not edit manually; re-run build tools after schema changes" in lines
+        )
+
+    def test_sre_production_environment_bullets_stay_separate(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """A bullet whose line ends in an inline `{% endif %}` keeps its newline."""
+        lines = rendered["sre"].splitlines()
+
+        assert "- Server application managing 42 production records" in lines
+        assert "- Rollback available via deployment pipeline" in lines
+        assert "- Data persistence via sqlite" in lines
+
+    def test_architect_intent_paragraph_is_separated_from_next_section(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """The blank line Markdown needs between two blocks survives the render."""
+        lines = rendered["architect"].splitlines()
+        index = lines.index("**Key abstractions:**")
+
+        assert lines[index - 1] == ""
+        assert lines[index - 2].startswith("**Architectural intent:**")
