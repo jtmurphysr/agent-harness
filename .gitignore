@@ -37,3 +37,6 @@ venv/
 # Written by the per-file floor gate in CI and by anyone running it locally (#14).
 coverage.json
 htmlcov/
+
+# Reviewer prompt assembled by ci.yml review-* jobs; never committed.
+.review/
