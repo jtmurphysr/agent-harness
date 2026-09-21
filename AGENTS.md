@@ -356,6 +356,37 @@ Whenever you add a check that writes where a human or an agent will read it — 
 comment, a label, a status, a file — write the retraction path in the same
 change and test it. Silence on the happy path leaves the last bad news standing.
 
+<!-- paragraph added after PR #31 — see docs/learnings/pr-31.md -->
+
+**Because verdicts retract, you must write the rounds down yourself.** A retracted
+comment is gone: compound-learning reads PR comments once, at merge, and by then
+every `review-*` comment shows only the last round. If a reviewer BLOCKed you and
+you fixed it, add a section to the PR body naming the round, the reviewer, the
+finding and the commit that fixed it. PR #31 was blocked ten times across five
+rounds and merged showing three WARNs; its learning file exists only because the
+agent narrated the rounds in the body. Findings that live only in a comment the
+next push erases are findings this repository never learns from.
+
+### ⚠️ LESSON 17: A prompt over 128 KiB kills `claude-code-action` before it starts
+
+<!-- added after PR #31 — cost a full review round, see docs/learnings/pr-31.md -->
+
+The action hands its `prompt` input to a subprocess as one argv string, and Linux
+caps a single argument at 128 KiB (`MAX_ARG_STRLEN`). A ~135 KB assembled prompt
+dies with `Argument list too long` — before the model runs, with no output to
+parse, so a step that depends on the result posts nothing and whatever the last
+run wrote stays up. Any workflow that concatenates an issue body, a PR body or a
+diff into a prompt will reach this.
+
+Write the payload to a file **inside the workspace** (gitignored) and pass a short
+pointer. Two follow-ons, both found the round after:
+
+- Outside the workspace the read-only tool grant cannot reach the file at all.
+- One `Read` returns at most 2000 lines. Give the exact line count and tell the
+  agent to page, or it silently reviews the first 2000 lines. A sentinel on the
+  last line that the agent must quote back catches truncation — it does not prove
+  the agent read the middle, since `tail` is in the grant.
+
 ---
 
 ## Definition of Done
