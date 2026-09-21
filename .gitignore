@@ -37,3 +37,10 @@ venv/
 # Written by the per-file floor gate in CI and by anyone running it locally (#14).
 coverage.json
 htmlcov/
+
+# Written into the repo root by gc-agent.yml's two report steps before the GC
+# agent runs. Untracked and unignored, they showed up as dirty files in the GC
+# agent's own `git status` -- the one agent most likely to `git add .` and
+# commit a transcript of its own inputs.
+harness_report.txt
+coverage_report.txt

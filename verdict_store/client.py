@@ -1,12 +1,21 @@
 """Database client for verdict store operations.
 
 This module provides the VerdictStoreClient class and supporting data classes
-for all database read/write operations. It is the ONLY module that directly
-accesses the SQLite database - all other modules must use this interface.
+for all database read/write operations. It is INTENDED to be the only module
+that opens a SQLite connection; all other modules should go through this
+interface.
 
 ⚠️ WARNING: Verdict Store write ordering — Verdict Store write must succeed before GitHub issue creation
-⚠️ WARNING: This is the ONLY module that touches the database — No direct DB access elsewhere
 ⚠️ WARNING: Transaction safety — All multi-table writes must be atomic
+⚠️ WARNING: The "only module that touches the database" rule is currently BROKEN,
+    and nothing enforces it. Eight call sites open their own connection:
+    `stonehaven/admin_api.py` (six, in the `_get_*` / `_calculate_*` helpers) and
+    `cli/reconcile.py` (two, one of which says so in its own docstring). The
+    contrast worth copying is `stonehaven/registry.py:list_projects`, which raises
+    NotImplementedError rather than reach past this client. Do NOT read the
+    violations as precedent and do not add a ninth: add the missing read method
+    here instead. Tracked as issue #34 and as phase 6 of
+    `docs/harness-hardening-plan.md`.
 """
 
 import sqlite3
