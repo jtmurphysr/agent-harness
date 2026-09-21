@@ -459,18 +459,26 @@ jobs:
         # skipped, and the PR kept displaying the previous round's BLOCK as if
         # it were live. A gate that crashed must never look like a gate that
         # blocked -- and must never leave the last verdict standing.
-        if: always() && steps.prompt.outcome == 'success'
+        #
+        # No guard on the prompt step either (architect BLOCK, round five):
+        # the assembly step now fails closed on an empty fetch, which makes
+        # its failure MORE likely, and a guard here would skip the only
+        # writer of this role's comment exactly then -- leaving the previous
+        # head's BLOCK standing on a head no reviewer saw.
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           EXEC_FILE: ${{ steps.review.outputs.execution_file }}
           REVIEW_OUTCOME: ${{ steps.review.outcome }}
+          PROMPT_OUTCOME: ${{ steps.prompt.outcome }}
           SENTINEL: ${{ steps.prompt.outputs.sentinel }}
           PROMPT_LINES: ${{ steps.prompt.outputs.prompt_lines }}
         run: |
           set -uo pipefail
           MARKER="<!-- review-$ROLE -->"
-          if [ "$REVIEW_OUTCOME" != "success" ] || [ -z "${EXEC_FILE:-}" ] || [ ! -f "$EXEC_FILE" ]; then
-            echo "::error::review-$ROLE: the reviewer step ended '$REVIEW_OUTCOME' with no execution file. The gate CRASHED; this is not a BLOCK and not a PASS. See the 'Run reviewer' step log."
+          if [ "$PROMPT_OUTCOME" != "success" ] || [ "$REVIEW_OUTCOME" != "success" ] || [ -z "${EXEC_FILE:-}" ] || [ ! -f "$EXEC_FILE" ]; then
+            [ "$PROMPT_OUTCOME" = "success" ] || REVIEW_OUTCOME="not run (prompt assembly ended '$PROMPT_OUTCOME')"
+            echo "::error::review-$ROLE: the reviewer step ended '$REVIEW_OUTCOME' with no execution file. The gate CRASHED; this is not a BLOCK and not a PASS. See the step logs."
             {
               echo "$MARKER"
               echo
@@ -774,18 +782,26 @@ jobs:
         # skipped, and the PR kept displaying the previous round's BLOCK as if
         # it were live. A gate that crashed must never look like a gate that
         # blocked -- and must never leave the last verdict standing.
-        if: always() && steps.prompt.outcome == 'success'
+        #
+        # No guard on the prompt step either (architect BLOCK, round five):
+        # the assembly step now fails closed on an empty fetch, which makes
+        # its failure MORE likely, and a guard here would skip the only
+        # writer of this role's comment exactly then -- leaving the previous
+        # head's BLOCK standing on a head no reviewer saw.
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           EXEC_FILE: ${{ steps.review.outputs.execution_file }}
           REVIEW_OUTCOME: ${{ steps.review.outcome }}
+          PROMPT_OUTCOME: ${{ steps.prompt.outcome }}
           SENTINEL: ${{ steps.prompt.outputs.sentinel }}
           PROMPT_LINES: ${{ steps.prompt.outputs.prompt_lines }}
         run: |
           set -uo pipefail
           MARKER="<!-- review-$ROLE -->"
-          if [ "$REVIEW_OUTCOME" != "success" ] || [ -z "${EXEC_FILE:-}" ] || [ ! -f "$EXEC_FILE" ]; then
-            echo "::error::review-$ROLE: the reviewer step ended '$REVIEW_OUTCOME' with no execution file. The gate CRASHED; this is not a BLOCK and not a PASS. See the 'Run reviewer' step log."
+          if [ "$PROMPT_OUTCOME" != "success" ] || [ "$REVIEW_OUTCOME" != "success" ] || [ -z "${EXEC_FILE:-}" ] || [ ! -f "$EXEC_FILE" ]; then
+            [ "$PROMPT_OUTCOME" = "success" ] || REVIEW_OUTCOME="not run (prompt assembly ended '$PROMPT_OUTCOME')"
+            echo "::error::review-$ROLE: the reviewer step ended '$REVIEW_OUTCOME' with no execution file. The gate CRASHED; this is not a BLOCK and not a PASS. See the step logs."
             {
               echo "$MARKER"
               echo
@@ -1089,18 +1105,26 @@ jobs:
         # skipped, and the PR kept displaying the previous round's BLOCK as if
         # it were live. A gate that crashed must never look like a gate that
         # blocked -- and must never leave the last verdict standing.
-        if: always() && steps.prompt.outcome == 'success'
+        #
+        # No guard on the prompt step either (architect BLOCK, round five):
+        # the assembly step now fails closed on an empty fetch, which makes
+        # its failure MORE likely, and a guard here would skip the only
+        # writer of this role's comment exactly then -- leaving the previous
+        # head's BLOCK standing on a head no reviewer saw.
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           EXEC_FILE: ${{ steps.review.outputs.execution_file }}
           REVIEW_OUTCOME: ${{ steps.review.outcome }}
+          PROMPT_OUTCOME: ${{ steps.prompt.outcome }}
           SENTINEL: ${{ steps.prompt.outputs.sentinel }}
           PROMPT_LINES: ${{ steps.prompt.outputs.prompt_lines }}
         run: |
           set -uo pipefail
           MARKER="<!-- review-$ROLE -->"
-          if [ "$REVIEW_OUTCOME" != "success" ] || [ -z "${EXEC_FILE:-}" ] || [ ! -f "$EXEC_FILE" ]; then
-            echo "::error::review-$ROLE: the reviewer step ended '$REVIEW_OUTCOME' with no execution file. The gate CRASHED; this is not a BLOCK and not a PASS. See the 'Run reviewer' step log."
+          if [ "$PROMPT_OUTCOME" != "success" ] || [ "$REVIEW_OUTCOME" != "success" ] || [ -z "${EXEC_FILE:-}" ] || [ ! -f "$EXEC_FILE" ]; then
+            [ "$PROMPT_OUTCOME" = "success" ] || REVIEW_OUTCOME="not run (prompt assembly ended '$PROMPT_OUTCOME')"
+            echo "::error::review-$ROLE: the reviewer step ended '$REVIEW_OUTCOME' with no execution file. The gate CRASHED; this is not a BLOCK and not a PASS. See the step logs."
             {
               echo "$MARKER"
               echo
