@@ -85,12 +85,20 @@ DEFAULT_CONTEXT = REPO_ROOT / ".factory" / "project_context.md"
 #: rather than silently labelling a comment after a reviewer that does not exist.
 REVIEWER_ROLES = ("engineer", "architect", "sre")
 
-_RETRY_NOTE = (
+_RETRY_NOTE_BLOCK = (
     "A retry must read every `review-*` comment on this PR before touching "
     "anything, and address each BLOCKING line or say why it is wrong. "
     "Disputing a finding does not clear it: the reviewer, not the implementing "
     "agent, decides whether the dispute holds, and the PR still has to "
     "re-review clean."
+)
+# Split by severity (engineer + SRE WARN on PR #31): a WARN does not block the
+# merge, and telling the next agent it "must address each BLOCKING line" on a
+# comment that has none reads as a merge-blocker to the agent acting on it.
+_RETRY_NOTE_WARN = (
+    "These do not block the merge. A retry should read them and act on any it "
+    "agrees with; the reviewer, not the implementing agent, decides whether a "
+    "dispute holds."
 )
 
 
@@ -180,7 +188,7 @@ def build_comment(verdict: ParsedVerdict) -> str:
     if warnings:
         lines += ["**WARNINGS**", "", *warnings, ""]
 
-    lines += [_RETRY_NOTE, ""]
+    lines += [_RETRY_NOTE_BLOCK if blocking else _RETRY_NOTE_WARN, ""]
     return "\n".join(lines)
 
 

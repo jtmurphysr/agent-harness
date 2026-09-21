@@ -159,17 +159,22 @@ ruff check .         # ← re-run after format to catch any new issues
 ### ⚠️ LESSON 2: Opening a PR requires an explicit `gh pr create` call
 
 The agent must explicitly create the PR. Do not assume it happens automatically.
-After all checks pass, always run:
+After all checks pass, write the body to a file **outside the worktree** (a
+committed body file is out of scope and fails the spec-conformance gate), then:
 ```bash
 gh pr create \
   --title "<title>" \
-  --body "Closes #N" \
+  --body-file /tmp/pr-body.md \
   --base main \
   --head $(git branch --show-current) \
   --label "agent-task"
 ```
-`Closes #N` here is **your own issue** and nothing else. See LESSON 5 before
-writing a closing keyword against any other issue number.
+The body is the input to three machine reviewers and to the spec-conformance
+gate, so it is not three lines. Its shape — `Closes #N` first, then `## What`,
+`## Files`, `## Verified`, `## Not done / out of scope` — is given in full in
+the dispatch prompt; every backticked path in it must be a path the diff touches.
+`Closes #N` is **your own issue** and nothing else. See LESSON 5 before writing a
+closing keyword against any other issue number.
 
 ### ⚠️ LESSON 3: `pyproject.toml` — use exact validated structure
 

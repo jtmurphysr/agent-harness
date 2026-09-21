@@ -263,7 +263,11 @@ jobs:
             reviewers (review-engineer / review-architect / review-sre) and to the
             spec-conformance gate. A body that says only "Implements Issue #N" gives a
             reviewer judging claim-against-diff no claims to judge, and gives the
-            `claimed-not-changed` check nothing to check. Write it in exactly this shape:
+            `claimed-not-changed` check nothing to check. Write it, in exactly the shape
+            below, to a file OUTSIDE the worktree — /tmp/pr-body.md, never a path inside
+            the repository. A body file you commit is a path outside the issue's FILES
+            sections and fails the scope check. Then pass it with
+            `gh pr create --body-file` as shown under OPENING THE PR below.
 
             Closes #${ISSUE_NUM}
 
@@ -286,6 +290,17 @@ jobs:
               does. For any other issue your PR advances, write `Refs #N` instead.
             - Every backticked path in the prose must be a path your diff touches.
               The gate fails `claimed-not-changed` on a path you claim and did not change.
+
+            OPENING THE PR — use gh CLI, with the body file above:
+            ISSUE_NUM="${{ steps.dep-check.outputs.issue_num }}"
+            BRANCH=$(git branch --show-current)
+            gh pr create \
+              --title "Issue #${ISSUE_NUM}: $(gh issue view ${ISSUE_NUM} --repo ${{ github.repository }} --json title -q '.title')" \
+              --body-file /tmp/pr-body.md \
+              --head "$BRANCH" \
+              --base main \
+              --repo ${{ github.repository }} \
+              --label "agent-task"
 
             AFTER THE PR IS OPEN — three reviewers run on it, in parallel, blind to each
             other. A `VERDICT: BLOCK` from any one of them is a HARD MERGE-FAIL: the job

@@ -47,6 +47,13 @@ jobs:
   # `human-review` applied HERE, by CI, not by the agent, and auto-merge also
   # checks the output directly so a failed label write cannot open the door.
   # An agent may PROPOSE a change to the rules. It may not land one alone.
+  #
+  # Since #29 the rules include the review gate's INPUTS: the three reviewer
+  # jobs read their definitions, the invariant list and the verdict parser from
+  # the PR head. A PR editing any of those would be judged by the gate it is
+  # rewriting -- so they are guarded here too (SRE BLOCK on PR #31, invariant
+  # gate_fails_closed). The alternative, checking the gate out at base.sha,
+  # means a PR that fixes the gate is reviewed by the broken gate.
   workflow-guard:
     name: Workflow Change Guard
     runs-on: ubuntu-latest
@@ -65,10 +72,10 @@ jobs:
         run: |
           set -uo pipefail
           changed=$(gh pr diff "$PR" --repo "${{ github.repository }}" --name-only)
-          hits=$(printf '%s\n' "$changed" | grep -E '^\.github/workflows/' || true)
+          hits=$(printf '%s\n' "$changed" | grep -E '^(\.github/workflows/|templates/|\.claude/agents/|\.factory/project_context\.md$|scripts/parse_review_verdict\.py$|reviewers/verdicts\.py$)' || true)
           if [ -z "$hits" ]; then
             echo "touches_workflows=false" >> "$GITHUB_OUTPUT"
-            echo "No workflow files changed."
+            echo "No workflow or review-gate files changed."
             exit 0
           fi
           echo "touches_workflows=true" >> "$GITHUB_OUTPUT"
@@ -85,13 +92,13 @@ jobs:
           # Build the comment in a file: a heredoc inside a YAML block scalar has to
           # stay indented, and markdown bold at column 0 reads as a YAML alias.
           {
-            echo '**Workflow Change Guard:** this PR modifies CI/automation under `.github/workflows/`:'
+            echo '**Workflow Change Guard:** this PR modifies CI/automation or the review gate'"'"'s inputs (workflows, reviewer templates, rendered agents, project context, verdict parser):'
             echo
             printf -- '- `%s`\n' $hits
             echo
             echo '`human-review` has been applied by CI. Auto-merge will not run on this PR regardless of who opened it or what other labels it carries. A human merges changes to the rules.'
             echo
-            echo 'Review the workflow diff specifically for: auto-merge conditions, the sequential gate, secrets usage, and the `workflow-guard` job itself.'
+            echo 'Review the diff specifically for: auto-merge conditions, the sequential gate, secrets usage, the `workflow-guard` job itself, and anything that changes what a reviewer is told or how its verdict is read.'
           } > "$RUNNER_TEMP/guard-comment.md"
           gh api -X POST "repos/${{ github.repository }}/issues/$PR/comments" \
             -F body=@"$RUNNER_TEMP/guard-comment.md" >/dev/null

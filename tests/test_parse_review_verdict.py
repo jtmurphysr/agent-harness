@@ -393,6 +393,22 @@ WARNINGS:
         assert run(monkeypatch, WARN_REVIEW, context) == EXIT_OK
         assert "the reviewer, not the implementing" in capsys.readouterr().out
 
+    def test_warn_note_does_not_read_as_a_merge_blocker(
+        self, monkeypatch: pytest.MonkeyPatch, context: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A WARN with no BLOCKING lines must not tell the retrying agent to
+        # "address each BLOCKING line" -- there are none, and the merge is open.
+        assert run(monkeypatch, WARN_REVIEW, context) == EXIT_OK
+        out = capsys.readouterr().out
+        assert "do not block the merge" in out
+        assert "address each BLOCKING line" not in out
+
+    def test_block_note_still_demands_each_blocking_line(
+        self, monkeypatch: pytest.MonkeyPatch, context: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert run(monkeypatch, BLOCK_REVIEW, context) == EXIT_BLOCK
+        assert "address each BLOCKING line" in capsys.readouterr().out
+
 
 class TestInvokedAsCi:
     """The CI step runs this as a process, so prove the process contract too.
