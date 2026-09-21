@@ -35,9 +35,14 @@ except ImportError:
 # pipeline/reporter/models -- until 2026-08-24. None of them exist in this repo,
 # so INTERNAL_MODULES resolved to nothing on disk, Pass 1 walked zero files, and
 # "Harness Structure" passed green as a required check while verifying nothing.
-# AGENTS.md still carries the same unfilled placeholder; the templating step was
-# never completed. Below is this repo's real graph, derived by AST-walking every
-# package in pyproject's packages list.
+# Below is this repo's real graph, derived by AST-walking every package in
+# pyproject's packages list.
+#
+# AGENTS.md > Module Boundaries carries the same graph twice: as prose (filled
+# 2026-08-24) and as the invariants table (filled 2026-09-21; it was the example
+# placeholder until then). NOTHING CHECKS EITHER COPY AGAINST THIS ONE -- this
+# map is the enforced copy and those are read by humans and agents. Edit all
+# three together.
 # ─────────────────────────────────────────────────────────────────
 ALLOWED_IMPORTS: dict[str, set[str]] = {
     # Leaves — import nothing internal.
@@ -51,8 +56,9 @@ ALLOWED_IMPORTS: dict[str, set[str]] = {
     # Orchestrators.
     "stonehaven": {"github", "notifications", "reviewers", "verdict_store"},
     "cli": {"github", "interview", "renderer", "stonehaven"},
-    # `templates` is in pyproject's packages list but holds 6 .md files and zero
-    # .py, so nothing can import it and it is not an internal module here.
+    # `templates` is in pyproject's packages list but holds only .md files (3
+    # role templates + 4 _shared partials) and zero .py, so nothing can import
+    # it and it is not an internal module here.
 }
 
 # Cycles present when this map was first written, accepted explicitly so that

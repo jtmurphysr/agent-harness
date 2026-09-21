@@ -1,5 +1,28 @@
 # Agent Harness Hardening Plan
 
+## Status — verified 2026-09-21 (GC pass)
+
+This plan was written against an earlier tree and some of it has landed. Each phase
+below now opens with a status line. Three paths it refers to do not exist in this
+repository and never did: **`harness-gen/`**, **`docs/PRD.md`** (the input
+`prd-to-issues` reads in a *generated* project — this repo has no PRD of its own),
+and **`.workstream`** (gitignored, untracked). Actions naming them are struck
+through rather than deleted, so the plan still reads as the document it was.
+
+| Phase | Status |
+|---|---|
+| 1. Clarify repository boundaries | **Partly landed** — `docs/architecture.md` now exists; README still never explains `project_context.md` |
+| 2. Split validation | **Partly landed** — the zero-file guard is in; no separate `validate_repo.py`, and the boundary linter became the root-repo linter rather than staying payload-only |
+| 3. Repository hygiene | **Landed**, except the CI hygiene check |
+| 4. Config and secrets | **Open** — `stonehaven/listener.py:30` still defaults `webhook_secret="webhook-secret-placeholder"` |
+| 5. Generated artifact locations | **Landed** — `.factory/templates_lock.yml` is the path everywhere |
+| 6. Verdict store and registry boundaries | **Open** — 8 direct-SQL sites outside `verdict_store/` |
+| 7. Durable webhook processing | **Open** — `stonehaven/listener.py:42` dedupes in an in-process `set` |
+| 8. Real reviewer adapters | **Open** — `reviewers/dispatch.py:300` returns a canned string; superseded in approach by issue #29 |
+| 9. Worker concurrency and file handling | **Open** — `stonehaven/worker.py:318` writes `/tmp/agent_<role>.md` |
+| 10. CLI consistency | **Mostly landed** — one `print()` remains, `cli/init.py:764`; no `[project.scripts]`, no dry-run modes |
+| 11. Test strategy | **Partly landed** — `slow` marker and default deselect are in; the taxonomy is not |
+
 ## Purpose
 
 This document lists the actions I would take to make the repository easier to operate, validate, and evolve as a harness for building Python applications with GitHub workflows and Claude Code.
@@ -35,11 +58,9 @@ The plan separates three concerns:
    - `project_context.md` carries project-specific instructions
    - `AGENTS.md + project_context.md` together form the agent contract in generated repos
 
-3. Move or document `docs/PRD.md` as a historical subsystem PRD rather than the root product definition.
+3. ~~Move or document `docs/PRD.md` as a historical subsystem PRD rather than the root product definition.~~ — moot: this repo has no `docs/PRD.md`. The path is the *generated project's* PRD input, read by `prd-to-issues.yml`.
 
-4. Decide the intended status of `harness-gen/`:
-   - if fixture/reference material, exclude it from root lint/type/test discovery
-   - if active code, promote it into the main package structure
+4. ~~Decide the intended status of `harness-gen/`.~~ — moot: no such directory exists.
 
 ### Acceptance Criteria
 
@@ -62,9 +83,12 @@ The plan separates three concerns:
    - treated as a failure when running in project mode
 
 5. Align `pyproject.toml` exclusions with the intended repo structure:
-   - exclude `harness-gen/` if it remains reference material
+   - ~~exclude `harness-gen/` if it remains reference material~~ — moot, see above
    - exclude cache/artifact paths
-   - decide whether scripts are linted as first-class code or intentionally excluded
+   - ~~decide whether scripts are linted as first-class code or intentionally excluded~~
+     — **decided**: `extend-exclude = []`, `scripts/` and `tests/` are linted like
+     everything else (issues #12/#15). `scripts/` remains excluded from **mypy**
+     only, for a packaging reason stated in `pyproject.toml`.
 
 ### Acceptance Criteria
 
@@ -84,7 +108,9 @@ The plan separates three concerns:
 
 2. Update `.gitignore` to cover those artifacts consistently.
 
-3. Decide whether `.claude/` and `.workstream` are intended repo artifacts. If not, ignore them.
+3. ~~Decide whether `.claude/` and `.workstream` are intended repo artifacts.~~
+   — **decided**: `.claude/` is tracked deliberately (executable config, listed in
+   `CODEOWNERS`); `.workstream` is gitignored and not present.
 
 4. Add a lightweight hygiene check to CI for forbidden committed artifacts.
 
@@ -301,10 +327,13 @@ The plan separates three concerns:
 
 The first PR should be deliberately small:
 
-1. Add documentation explaining the three repo layers.
-2. Update `README.md` to explain `AGENTS.md + project_context.md`.
-3. Exclude `harness-gen/` from root lint if it is reference material.
-4. Add or update `.gitignore` for cache artifacts.
-5. Add a root validation note that `scripts/validate_harness.py` is template payload, not root-repo enforcement.
+1. ~~Add documentation explaining the three repo layers.~~ — `docs/architecture.md` §1.
+2. Update `README.md` to explain `AGENTS.md + project_context.md`. — still open.
+3. ~~Exclude `harness-gen/` from root lint.~~ — moot.
+4. ~~Add or update `.gitignore` for cache artifacts.~~ — done.
+5. ~~Add a root validation note that `scripts/validate_harness.py` is template payload, not root-repo enforcement.~~
+   — **superseded.** It is now both: real `ALLOWED_IMPORTS`, a `files_checked == 0`
+   guard, and two passes (coverage-omit drift, rendered-agent drift) that only make
+   sense against this repo. The note that would have been written is no longer true.
 
 This reduces future confusion without touching the runtime behavior of the harness or the Triumvirate extension.

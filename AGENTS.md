@@ -1,16 +1,24 @@
 # AGENTS.md — Agent Operating Constitution
-# <PROJECT-NAME>
+# agent-harness
 
 This file is the primary context document for all agents operating in this repository.
 Read it in full before taking **any** action. It is the single source of truth for
 conventions, module boundaries, and the definition of "done."
 
+It is **both** this repo's constitution and the template copied into generated
+projects. Filled-in sections describe `agent-harness`; `<angle-bracketed>` ones are
+unfilled payload, and filling them is step one of templating.
+
 ---
 
 ## Repository Identity
 
-- **Purpose**: <one-line description of what this project does>
-- **Stack**: <language, runtime, framework — e.g., "Python 3.11+, CLI-first, no web framework">
+- **Purpose**: An autonomous development harness that turns a PRD into a working
+  codebase — issues generated from the PRD, dispatched one at a time to Claude Code
+  agents, gated by CI, auto-merged, and mined for learnings on every merge. The repo
+  is both the harness and its first user.
+- **Stack**: Python 3.11+, FastAPI (Stonehaven admin API + webhook listener), SQLite
+  (verdict store), Jinja2 (agent-definition rendering), httpx, structlog, Pydantic v2
 - **Paradigm**: Agent-first — all code, tests, and docs are agent-generated
 - **Pipeline**: Issue → Agent → Code → PR → CI → Auto-merge (sequential by dependency)
 - **Human role**: Intent specification, credential provisioning, outcome validation
@@ -22,28 +30,18 @@ conventions, module boundaries, and the definition of "done."
 Define the boundary map for your project. Each module may only import from explicitly
 listed dependencies. This is enforced by `scripts/validate_harness.py`.
 
-<!--
-EXAMPLE (CLI tool with auth, clients, resolvers, pipeline pattern):
-
-```
-app.py                  ← CLI entrypoint only. Parses args, calls pipeline. No logic.
-├── auth/
-│   ├── service_a_auth.py  ← Service A credential lifecycle only
-│   └── service_b_auth.py  ← Service B credential lifecycle only
-├── clients/
-│   ├── service_a_client.py  ← Service A API I/O only. No business logic.
-│   └── service_b_client.py  ← Service B API I/O only. Rate limiting lives here.
-├── resolvers/
-│   ├── primary_resolver.py  ← Primary matching logic only. No API calls.
-│   └── fallback_resolver.py ← Fallback matching logic only. No API calls.
-├── pipeline.py             ← Orchestration only. Imports clients + resolvers + models.
-├── reporter.py             ← Output only. Reads from models. No logic.
-└── models.py               ← Pydantic v2 schemas only. No logic, no internal imports.
-```
--->
+<!-- When templating: the filled-in map and table below are the worked example.
+     Replace both, and replace ALLOWED_IMPORTS in scripts/validate_harness.py to
+     match. A fictional second example used to sit here; it was 900 characters of
+     SessionStart budget describing a project that does not exist. -->
 
 This repo's live map. It mirrors `ALLOWED_IMPORTS` in `scripts/validate_harness.py`
-exactly; the two are checked against each other and must be edited together.
+exactly and the two must be edited together.
+
+> **By hand — nothing checks it.** The linter enforces `ALLOWED_IMPORTS` against
+> the code and never reads this file. Until 2026-09-21 this said the two "are
+> checked against each other"; the table below had sat unfilled the whole time
+> and no run ever went red.
 
 ```
 cli/              ← Entrypoints: init, reconcile, render, review, sync.
@@ -56,8 +54,9 @@ renderer/         ← Template composition, lockfile, validators.  Imports nothi
 interview/        ← Analysis.                                    Imports nothing internal.
 notifications/    ← Publishing.                                  Imports nothing internal.
 verdict_store/    ← Verdict persistence: client, models.         Imports nothing internal.
-templates/        ← 6 .md files, zero .py — not importable. Covered by
-                    tests/test_templates.py and tests/test_shared_partials.py.
+templates/        ← 3 role templates + 4 _shared partials, zero .py — not
+                    importable. Covered by tests/test_templates.py and
+                    tests/test_shared_partials.py.
 tests/
 ```
 
@@ -75,25 +74,21 @@ fails the linter; do not add to that set without a written reason.
 
 ### Invariants (enforced by structural linter — `scripts/validate_harness.py`)
 
-<!--
-Define which modules may import from which. Update ALLOWED_IMPORTS in
-scripts/validate_harness.py to match this table.
-
-EXAMPLE:
+<!-- Both columns must agree with ALLOWED_IMPORTS in scripts/validate_harness.py. -->
 
 | Module | May import from | Must NEVER import from |
 |---|---|---|
-| `auth/` | `models` | `clients`, `resolvers`, `pipeline`, `reporter` |
-| `clients/` | `auth`, `models` | `resolvers`, `pipeline`, `reporter` |
-| `resolvers/` | `models` | `auth`, `clients`, `pipeline`, `reporter` |
-| `pipeline` | `clients`, `resolvers`, `models`, `reporter` | `auth` (injected) |
-| `reporter` | `models` | `auth`, `clients`, `resolvers`, `pipeline` |
-| `models` | _(nothing internal)_ | everything |
--->
+| `interview/` | _(nothing internal)_ | everything |
+| `notifications/` | _(nothing internal)_ | everything |
+| `renderer/` | _(nothing internal)_ | everything |
+| `verdict_store/` | _(nothing internal)_ | everything |
+| `github/` | `reviewers` | `cli`, `interview`, `notifications`, `renderer`, `stonehaven`, `verdict_store` |
+| `reviewers/` | `github` | `cli`, `interview`, `notifications`, `renderer`, `stonehaven`, `verdict_store` |
+| `stonehaven/` | `github`, `notifications`, `reviewers`, `verdict_store` | `cli`, `interview`, `renderer` |
+| `cli/` | `github`, `interview`, `renderer`, `stonehaven` | `notifications`, `reviewers`, `verdict_store` |
 
-| Module | May import from | Must NEVER import from |
-|---|---|---|
-| `<module>` | `<allowed>` | `<forbidden>` |
+`templates/` is in pyproject's `packages` list but holds only `.md` files, so it is
+not importable and has no row. `tests/` and `scripts/` are not boundary-tracked.
 
 **Why enforce boundaries**: Keeps modules independently testable and prevents coupling.
 
@@ -132,9 +127,18 @@ Before creating a resource, check if one with the same identifier already exists
 Do not rely on catching a "duplicate" error — not all APIs return one reliably.
 -->
 
-### ⚠️ WARNING N: <title>
+### ⚠️ For this repo: read `.factory/project_context.md` > `sharp_edges`
 
-<description of failure mode and correct pattern>
+`agent-harness` keeps its warnings there rather than here, because that file is
+Layer 2 of the agent composition and is what the three reviewers are rendered
+from — a warning written here reaches an agent's context; one written there also
+reaches every reviewer judging the result. Seven are on record, covering the
+dispatch gate, the holding-label gate, `compound-learning.yml`'s direct push to
+`main`, `gc-agent.yml`'s missing `--allowedTools`, the protected-path guard on
+`.claude/`, `[tool.ruff] exclude`, and the two-PAT split.
+
+When templating this repo, write project warnings as DO/DON'T pairs under this
+heading, in the shape of the commented example above.
 
 ---
 
@@ -395,7 +399,11 @@ If not, wait. Do not start work on a dependent module before its dependency exis
 - `structlog` — structured JSON only
 - Every client method and pipeline stage logs entry + exit + exceptions
 - Fields: `event`, `module`, `duration_ms`, plus domain-relevant identifiers
-- **Never use `print()` in production code** — CLI output goes through `reporter.py`
+- **Never use `print()` in production code.** The example map in this template routes
+  CLI output through a `reporter.py`; **this repo has no such module**, so the rule
+  here is `structlog` or nothing. One violation is on record and unfixed —
+  `cli/init.py:764` prints the created PR URL. Do not add a second, and do not cite
+  `reporter.py` as though it existed.
 
 ### Environment Variables
 All secrets via env vars. Fail loud and early if any are missing:
@@ -409,19 +417,34 @@ def _require_env(key: str) -> str:
     if not value:
         raise EnvironmentError(
             f"Required environment variable '{key}' is not set. "
-            f"See docs/setup.md for configuration instructions."
+            f"See README.md > Getting Started for configuration instructions."
         )
     return value
 ```
 
 Required vars:
 <!--
-List all required environment variables for your project.
+When templating this repo, list all required environment variables for your project.
 Example:
 - `SERVICE_A_API_KEY`
 - `SERVICE_B_CLIENT_ID`
 - `SERVICE_B_CLIENT_SECRET`
 -->
+
+**This repo reads none.** No module under `cli/`, `github/`, `interview/`,
+`notifications/`, `renderer/`, `reviewers/`, `stonehaven/`, `verdict_store/` or
+`scripts/` calls `os.environ` or `os.getenv`; credentials are passed in as
+arguments by the caller. The secrets that exist are consumed by GitHub Actions,
+not by Python:
+
+| Secret | Consumed by | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | every `claude-code-action` step | Agent invocation |
+| `GH_PAT` | gates, labels, comments, auto-merge | Read and annotate; **no** workflow scope |
+| `GH_WORKFLOW_PAT` | the agent's `git push` only | Pushes touching `.github/workflows/` |
+
+Add a row here the moment a module starts reading one, and use `_require_env`
+above so a missing value fails before the first network call.
 
 ### Testing
 - `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`)
@@ -444,14 +467,23 @@ Example:
 
 ## Repository Knowledge Map
 
+Every row below names a path that exists. Four of them did not until 2026-09-21
+— `docs/setup.md`, `docs/conventions.md` and `docs/decisions/` were never created
+and `docs/architecture.md` was written by that GC pass. A map to documents that
+do not exist costs an agent a failed `Read` and a guess about where the answer
+actually lives; if you add a row, add the file.
+
 | Document | Purpose |
 |---|---|
 | `AGENTS.md` | This file. Operating constitution. |
-| `docs/architecture.md` | Module map, data flow, API contracts |
-| `docs/setup.md` | Credential provisioning and environment setup |
-| `docs/conventions.md` | Patterns and anti-patterns |
-| `docs/decisions/` | Architectural decision records |
-| `scripts/validate_harness.py` | Boundary linter |
+| `docs/architecture.md` | The three layers, module map, data flow, enforcement points |
+| `README.md` | Credential provisioning, environment setup, getting started |
+| `AGENTS.md` > Code Conventions | Patterns and anti-patterns |
+| `docs/learnings/` | Case histories behind the Harness Lessons above |
+| `docs/harness-hardening-plan.md` | Standing hardening backlog, with per-phase status |
+| `.factory/project_context.md` | This project's invariants, sharp edges, reviewer set |
+| `scripts/validate_harness.py` | Boundary linter (3 passes) |
+| `scripts/check_coverage_floor.py` | Per-file coverage floor gate |
 
 ---
 

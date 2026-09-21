@@ -27,7 +27,7 @@ deployment:
 
 invariants:
   - id: "layering"
-    rule: "Import direction is models <- {interview, notifications, renderer, verdict_store} <- {github, reviewers} <- stonehaven <- cli, as encoded in ALLOWED_IMPORTS in scripts/validate_harness.py. No module imports upward."
+    rule: "Import direction is {interview, notifications, renderer, verdict_store} (leaves, importing nothing internal) <- {github, reviewers} <- stonehaven <- cli, as encoded in ALLOWED_IMPORTS in scripts/validate_harness.py. No module imports upward. There is no top-level models module in this repo; reviewers/models.py and verdict_store/models.py belong to their own packages."
     severity: "correctness"
   - id: "gate_fails_closed"
     rule: "Every gate that can block a merge (the sequential dispatch gate, the workflow-change guard, the hook guards) must fail CLOSED on any error or unresolvable input. A gate that opens on a lookup miss is a report, not a gate."
