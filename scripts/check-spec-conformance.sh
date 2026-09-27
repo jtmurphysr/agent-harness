@@ -303,9 +303,23 @@ done <<< "$(printf '%s\n' "$spec" | sed -nE 's/^test //p' | sort -u)"
 
 # --------------------------------------------------------------- step 5 ---
 
-# LESSON 6 as a check. Fenced blocks are excluded: a shell snippet or a quoted
-# diff in a PR body is illustration, not a claim about this diff. An inline
-# backticked path is a claim.
+# LESSON 6 as a check, scoped to the ONE section that makes a claim.
+#
+# This originally treated every inline backticked path in the body as a claim
+# about the diff. That is wrong, and measurably so: it fired six times and caught
+# zero true positives. Four were on PR #31, whose body cited `templates/` and
+# `reviewers/verdicts.py` as context; two were on PRs #40 and #43, and #43 alone
+# carried FIFTEEN such tokens -- unavoidably, because a PR that ADDS TESTS FOR a
+# module must name that module while not modifying it. Satisfying the old rule
+# meant stripping backticks from accurate prose to appease a gate.
+#
+# The real failure (LESSON 6, PR #103) was a body asserting three AGENTS.md edits
+# its diff did not contain -- an assertion in the body's file list, not a passing
+# mention. So only the `## Files` section counts. Prose may reference anything;
+# the Files list is a claim and is held to the diff.
+#
+# Fenced blocks stay excluded everywhere: a shell snippet or quoted diff is
+# illustration.
 claimed=$(printf '%s\n' "$body" | awk '
     function backticks(line,   rest, tok) {
         rest = line
@@ -316,7 +330,11 @@ claimed=$(printf '%s\n' "$body" | awk '
         }
     }
     /^[ \t]*(```|~~~)/ { fence = !fence; next }
-    !fence { backticks($0) }
+    fence { next }
+    # Enter on a "## Files" heading; leave on the next heading of any level.
+    /^[ \t]*#+[ \t]*[Ff]iles[ \t]*:?[ \t]*$/ { infiles = 1; next }
+    /^[ \t]*#+[ \t]/ { infiles = 0 }
+    infiles { backticks($0) }
 ' | sort -u)
 
 while IFS= read -r token; do

@@ -50,7 +50,12 @@ jobs:
   #
   # Since #29 the rules include the review gate's INPUTS: the three reviewer
   # jobs read their definitions, the invariant list and the verdict parser from
-  # the PR head. A PR editing any of those would be judged by the gate it is
+  # the PR head. Since 2026-09-27 it also covers the three SHELL GATES --
+  # spec-conformance, refuse-held and resolve-predecessor -- which were the
+  # remaining hole: each decides whether a PR may merge, each is read from the
+  # PR head, and an agent could therefore rewrite the gate judging its own
+  # change. Same reasoning the SRE BLOCKed PR #31 for, applied to the files that
+  # were missed then. A PR editing any of those would be judged by the gate it is
   # rewriting -- so they are guarded here too (SRE BLOCK on PR #31, invariant
   # gate_fails_closed). The alternative, checking the gate out at base.sha,
   # means a PR that fixes the gate is reviewed by the broken gate.
@@ -72,7 +77,7 @@ jobs:
         run: |
           set -uo pipefail
           changed=$(gh pr diff "$PR" --repo "${{ github.repository }}" --name-only)
-          hits=$(printf '%s\n' "$changed" | grep -E '^(\.github/workflows/|templates/|\.claude/agents/|\.factory/project_context\.md$|scripts/parse_review_verdict\.py$|reviewers/verdicts\.py$)' || true)
+          hits=$(printf '%s\n' "$changed" | grep -E '^(\.github/workflows/|templates/|\.claude/agents/|\.factory/project_context\.md$|scripts/parse_review_verdict\.py$|reviewers/verdicts\.py$|scripts/check-spec-conformance\.sh$|scripts/refuse-held-issue\.sh$|scripts/resolve-predecessor\.sh$)' || true)
           if [ -z "$hits" ]; then
             echo "touches_workflows=false" >> "$GITHUB_OUTPUT"
             echo "No workflow or review-gate files changed."
