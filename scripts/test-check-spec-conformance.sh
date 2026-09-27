@@ -333,11 +333,53 @@ cp "$work/pr-1-diff.txt"   "$work/pr-20-diff.txt"
 cat > "$work/pr-20-body.md" <<'BODY'
 Closes #56
 
-Rewrites `reviewers/verdicts.py`, adds `tests/test_verdicts.py`, and records the
-three new lessons in `AGENTS.md`.
+## Files
+
+- `reviewers/verdicts.py` — rewritten
+- `tests/test_verdicts.py` — added
+- `AGENTS.md` — three new lessons recorded
 BODY
-v=$(run 20); is "PR body claims an edit its diff does not contain -> fail" \
+v=$(run 20); is "Files section claims an edit the diff lacks -> fail" \
     "fail claimed-not-changed AGENTS.md" "$v"
+
+# The inverse, and the reason this check was rescoped. A PR that ADDS TESTS FOR a
+# module must name that module in prose while not modifying it. The old rule
+# treated every inline backticked path as a claim and fired six times without a
+# single true positive; PR #43 alone carried fifteen such tokens. Prose is prose.
+cp "$work/pr-1-branch.txt" "$work/pr-30-branch.txt"
+cp "$work/pr-1-files.txt"  "$work/pr-30-files.txt"
+cp "$work/pr-1-diff.txt"   "$work/pr-30-diff.txt"
+cat > "$work/pr-30-body.md" <<'BODY'
+Closes #56
+
+Adds unit tests for `scripts/validate_harness.py` and `scripts/check_coverage_floor.py`.
+Neither is modified here; `pyproject.toml` needs no change because importing them
+from `tests/` is what makes coverage see them at all.
+
+## Files
+
+- `reviewers/verdicts.py` — rewritten
+- `tests/test_verdicts.py` — added
+BODY
+v=$(run 30); is "prose may name paths the diff does not touch -> pass" "pass" "$v"
+
+# A heading after the Files list closes it: later prose is prose again.
+cp "$work/pr-1-branch.txt" "$work/pr-31-branch.txt"
+cp "$work/pr-1-files.txt"  "$work/pr-31-files.txt"
+cp "$work/pr-1-diff.txt"   "$work/pr-31-diff.txt"
+cat > "$work/pr-31-body.md" <<'BODY'
+Closes #56
+
+## Files
+
+- `reviewers/verdicts.py` — rewritten
+- `tests/test_verdicts.py` — added
+
+## Notes
+
+Behaviour is unchanged for `AGENTS.md` and `templates/`.
+BODY
+v=$(run 31); is "Files section ends at the next heading -> pass" "pass" "$v"
 
 # Fenced illustration is not a claim about this diff.
 cp "$work/pr-1-branch.txt" "$work/pr-21-branch.txt"
