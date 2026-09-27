@@ -198,9 +198,22 @@ PR between open and merge; a finding that lives only there is lost.
 1. **Search before filing.** `gh issue list --search "<file or symbol>" --state open`.
    If it is already on file, comment there with what you saw and move on.
 2. If it is new, open it labelled `human-review`, and cite the number in your PR body.
+3. **Give it FILES TO CREATE and FILES TO MODIFY headings.** An issue you file is a
+   dispatch spec for the next agent, and `check-spec-conformance.sh` returns
+   `unresolved no-files-section` — fail closed, no auto-merge — for an issue that is
+   only prose. List the paths you believe the fix touches; "Read for context only"
+   entries go under FILES TO MODIFY and grant no permission to change them.
 
 Five agents in one generated project filed the same `.venv` finding five times
 because step 1 did not exist. Do step 1.
+
+<!-- step 3 added after PR #43 — third occurrence (#28, #29, #36), see docs/learnings/pr-43.md -->
+
+Step 3 is not paperwork. Issues #28, #29 and #36 were each dispatched as prose, and each
+blocked the PR that answered it — #43 for six days, on a diff that was correct on its
+first push and never changed. The sections were then retrofitted onto the issue with the
+diff already visible, which makes the resulting `pass` a mirror rather than a check.
+Guessing the file list wrong is cheap; omitting it is not.
 
 ### ⚠️ LESSON 5: A closing keyword is an executable instruction
 
@@ -281,6 +294,17 @@ enforcer in isolation, drive a route that omits the field entirely.
 
 This is Governing Principle 2 applied to tests: coverage proves the code runs,
 not that it enforces.
+
+<!-- generalised after PR #43 — see docs/learnings/pr-43.md -->
+
+**The rule is wider than defaults: an assertion that holds with the mechanism deleted
+proves nothing.** PR #43 shipped
+`test_print_table_width_never_shrinks_below_the_header`, which calls the printer and
+asserts `"Path" in out`. Python's `:<{width}}` pads and never truncates, so the header
+prints whether or not the `max(..., len("Path"))` guard it names exists. The check is
+mechanical and takes a minute: **delete the line you are testing, re-run the test, and
+watch it fail.** If it passes, you have written a decoration — on this repo, in a PR
+whose own premise was that a check which cannot fail is one.
 
 ### ⚠️ LESSON 11: Forbid a duplicated helper with a test, not a comment
 
