@@ -1,10 +1,395 @@
 """Tests for cli/render.py."""
 
+import functools
+import re
+import tempfile
 from pathlib import Path
 
 import pytest
 
 from cli.render import RenderError, render_agents
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEMPLATES_DIR = REPO_ROOT / "templates"
+
+# A context whose lists are long enough that a collapsed render is detectable, and
+# whose invariants are ordered so that each role's filtered subset sits at
+# positions the unfiltered list would number differently. `loop.index` over the
+# unfiltered list would print 2, 4, 5 for engineer, 3, 5 for architect and 1, 4 for
+# sre; over the filtered subset it prints 1, 2, 3 and 1, 2 and 1, 2.
+SHAPE_CONTEXT = """---
+project:
+  name: "shape-project"
+  description: "A project used to assert the shape of the rendered output."
+
+stack:
+  language: "python"
+  framework: "fastapi"
+  database: "postgresql"
+  primary_files:
+    high_blast_radius:
+      - "blast/one.py"
+      - "blast/two.py"
+    generated:
+      - "generated/one.py"
+      - "generated/two.py"
+
+deployment:
+  surface: "server"
+  rollback_available: true
+  forced_update: false
+  user_data_recoverable: false
+
+invariants:
+  - id: "inv_delta"
+    rule: "Delta rule, irreversibility."
+    severity: "irreversibility"
+  - id: "inv_alpha"
+    rule: "Alpha rule, correctness."
+    severity: "correctness"
+  - id: "inv_echo"
+    rule: "Echo rule, performance."
+    severity: "performance"
+  - id: "inv_bravo"
+    rule: "Bravo rule, data loss."
+    severity: "data_loss"
+  - id: "inv_charlie"
+    rule: "Charlie rule, data consistency."
+    severity: "data_consistency"
+
+sharp_edges:
+  - location: "edge/one.py"
+    issue: "Issue one"
+    fix: "Fix one"
+  - location: "edge/two.py"
+    issue: "Issue two"
+    fix: "Fix two"
+  - location: "edge/three.py"
+    issue: "Issue three"
+    fix: "Fix three"
+
+structural_decisions:
+  - decision: "Decision alpha"
+    rationale: "Rationale alpha"
+  - decision: "Decision beta"
+    rationale: "Rationale beta"
+
+becoming:
+  - "Goal alpha"
+  - "Goal beta"
+
+reviewers:
+  engineer:
+    enabled: true
+    model_class: "code_review"
+  architect:
+    enabled: true
+    model_class: "structural_review"
+  sre:
+    enabled: true
+    model_class: "adversarial_review"
+---
+
+Context body.
+"""
+
+
+@functools.cache
+def _render_shape_agents() -> dict[str, str]:
+    """Render engineer, architect and sre from the real templates + SHAPE_CONTEXT.
+
+    Cached: the three files are identical for every test in this module, and the
+    scratch directory is thrown away once their text has been read.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        tmp_path = Path(scratch)
+        context_file = tmp_path / "project_context.md"
+        context_file.write_text(SHAPE_CONTEXT)
+        output_dir = tmp_path / "agents"
+        render_agents(context_file, TEMPLATES_DIR, output_dir, update_lock=False)
+        return {
+            role: (output_dir / f"{role}.md").read_text()
+            for role in ("engineer", "architect", "sre")
+        }
+
+
+def _item_numbers(block: list[str]) -> list[int]:
+    """Return the leading `N.` ordinal of every line in an invariant block."""
+    numbers = []
+    for line in block:
+        match = re.match(r"(\d+)\. ", line)
+        assert match is not None, f"invariant line is not numbered: {line!r}"
+        numbers.append(int(match.group(1)))
+    return numbers
+
+
+def _block_after(content: str, marker: str) -> list[str]:
+    """Return the lines of the first non-empty block following `marker`.
+
+    Blank lines between the marker and the block are skipped; collection stops at
+    the first blank line after it. A collapsed render therefore shows up as a
+    one-element list whose single element carries every item's text.
+    """
+    lines = content.splitlines()
+    starts = [i for i, line in enumerate(lines) if line.strip() == marker]
+    assert starts, f"marker not found in rendered output: {marker!r}"
+    i = starts[0] + 1
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    block = []
+    while i < len(lines) and lines[i].strip():
+        block.append(lines[i])
+        i += 1
+    return block
+
+
+class TestRenderedListShape:
+    """The rendered agent files must put each list item on its own physical line.
+
+    `trim_blocks=True` (renderer/compose.py) deletes the newline immediately after
+    a block tag. A loop body that ends in `{% endif %}{% endfor %}` therefore loses
+    the newline that separates one item from the next, and the whole list renders
+    as one line. The same setting made `{% if %}`-guarded checklist bullets run
+    into the bullet below them.
+
+    Separately, filtering inside the loop (`{% for x in xs %}{% if ... %}`) leaves
+    `loop.index` counting the *unfiltered* list, so a role's invariants printed as
+    1, 3, 5 — a visible gap that reads as two dropped items.
+
+    These tests render the real shipped templates, so a future template edit that
+    re-collapses a list fails here rather than shipping to every generated project.
+    validate_harness.py Pass 3 cannot catch it: it diffs the rendered agents against
+    a fresh render of the same templates, so it is self-consistent by construction.
+    """
+
+    @pytest.fixture
+    def rendered(self) -> dict[str, str]:
+        """The three agent files rendered from the real templates."""
+        return _render_shape_agents()
+
+    # --- invariants: one per line, numbered contiguously from 1 ----------------
+
+    def test_engineer_invariants_render_one_per_line(self, rendered: dict[str, str]) -> None:
+        """Engineer's three matching invariants occupy three separate lines."""
+        block = _block_after(rendered["engineer"], "**Critical correctness invariants:**")
+        assert len(block) == 3, block
+        assert "inv_alpha" in block[0]
+        assert "inv_bravo" in block[1]
+        assert "inv_charlie" in block[2]
+
+    def test_engineer_invariant_numbering_counts_the_filtered_set(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """Numbering is 1, 2, 3 — not the 2, 4, 5 of the unfiltered list."""
+        block = _block_after(rendered["engineer"], "**Critical correctness invariants:**")
+        assert _item_numbers(block) == [1, 2, 3]
+
+    def test_architect_invariants_render_one_per_line(self, rendered: dict[str, str]) -> None:
+        """Architect's two matching invariants occupy two separate lines."""
+        block = _block_after(rendered["architect"], "**Critical architectural invariants:**")
+        assert len(block) == 2, block
+        assert "inv_echo" in block[0]
+        assert "inv_charlie" in block[1]
+
+    def test_architect_invariant_numbering_counts_the_filtered_set(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """Numbering is 1, 2 — not the 3, 5 of the unfiltered list."""
+        block = _block_after(rendered["architect"], "**Critical architectural invariants:**")
+        assert _item_numbers(block) == [1, 2]
+
+    def test_sre_invariants_render_one_per_line(self, rendered: dict[str, str]) -> None:
+        """SRE's two matching invariants occupy two separate lines."""
+        block = _block_after(rendered["sre"], "**Critical production invariants:**")
+        assert len(block) == 2, block
+        assert "inv_delta" in block[0]
+        assert "inv_bravo" in block[1]
+
+    def test_sre_invariant_numbering_counts_the_filtered_set(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """Numbering is 1, 2 — not the 1, 4 of the unfiltered list."""
+        block = _block_after(rendered["sre"], "**Critical production invariants:**")
+        assert _item_numbers(block) == [1, 2]
+
+    def test_no_role_renumbers_an_invariant_above_its_own_count(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """No numbered invariant line carries an index past the block's length.
+
+        This is the gap the symptom reported — 1, 3, 5 for a three-item set.
+        """
+        markers = {
+            "engineer": "**Critical correctness invariants:**",
+            "architect": "**Critical architectural invariants:**",
+            "sre": "**Critical production invariants:**",
+        }
+        for role, marker in markers.items():
+            block = _block_after(rendered[role], marker)
+            numbers = _item_numbers(block)
+            assert numbers == list(range(1, len(block) + 1)), (role, numbers)
+
+    # --- sharp edges -----------------------------------------------------------
+
+    def test_engineer_sharp_edges_render_one_per_line(self, rendered: dict[str, str]) -> None:
+        """Each sharp edge gets its own line, carrying location, issue and fix."""
+        block = _block_after(rendered["engineer"], "**Known sharp edges:**")
+        assert len(block) == 3, block
+        for line, name in zip(block, ("one", "two", "three"), strict=True):
+            assert line.startswith(f"- edge/{name}.py — ")
+            assert f"Issue {name}" in line
+            assert f"Fix {name}" in line
+
+    def test_sre_operational_pain_points_render_one_per_line(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """SRE lists the same sharp edges, one per line, without the fix."""
+        block = _block_after(rendered["sre"], "**Known operational pain points:**")
+        assert len(block) == 3, block
+        for line, name in zip(block, ("one", "two", "three"), strict=True):
+            assert line == f"- edge/{name}.py: Issue {name}"
+
+    # --- structural decisions, becoming, key abstractions ----------------------
+
+    def test_engineer_structural_decisions_render_one_per_line(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """Pass 2's checklist keeps its fixed bullet and one bullet per decision."""
+        block = _block_after(rendered["engineer"], "**Pass 2 — Coverage checklist:**")
+        assert len(block) == 3, block
+        assert block[1] == "- Decision alpha: Rationale alpha"
+        assert block[2] == "- Decision beta: Rationale beta"
+
+    def test_architect_structural_decisions_render_one_per_line(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """Architect renders decision and rationale one per line."""
+        block = _block_after(
+            rendered["architect"], "**Known structural decisions worth preserving:**"
+        )
+        assert block == [
+            "- Decision alpha — Rationale alpha",
+            "- Decision beta — Rationale beta",
+        ]
+
+    def test_architect_becoming_goals_render_one_per_line(self, rendered: dict[str, str]) -> None:
+        """The 12-month horizon list is one goal per line."""
+        block = _block_after(rendered["architect"], "**What this is becoming (12-month horizon):**")
+        assert block == ["- Goal alpha", "- Goal beta"]
+
+    def test_architect_key_abstractions_render_one_per_line(self, rendered: dict[str, str]) -> None:
+        """Data layer, framework and each high-blast-radius file get their own line."""
+        block = _block_after(rendered["architect"], "**Key abstractions:**")
+        assert len(block) == 4, block
+        assert block[0].startswith("- **Data layer** (postgresql) — ")
+        assert block[1].startswith("- **fastapi framework** — ")
+        assert block[2].startswith("- **blast/one.py** — ")
+        assert block[3].startswith("- **blast/two.py** — ")
+
+    def test_architect_intent_stays_its_own_markdown_block(self, rendered: dict[str, str]) -> None:
+        """A blank line separates the intent paragraph from the next heading.
+
+        The inline `{% endif %}` that closed the intent chain ate it, so the two
+        merged into a single Markdown paragraph.
+        """
+        content = rendered["architect"]
+        assert "production data management.\n\n**Key abstractions:**" in content
+
+    # --- {% if %}-guarded bullets ---------------------------------------------
+
+    def test_engineer_pass_one_checklist_renders_one_bullet_per_line(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """The database and generated-files bullets do not run into each other."""
+        block = _block_after(rendered["engineer"], "**Pass 1 — Correctness checklist:**")
+        assert len(block) == 3, block
+        assert block[1].startswith("- Database queries:")
+        assert block[2].startswith("- Generated files (generated/one.py, generated/two.py):")
+
+    def test_engineer_question_set_renders_one_bullet_per_line(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """The guarded database question does not swallow the bullet after it."""
+        block = _block_after(rendered["engineer"], "## Your Standing Question Set")
+        assert len(block) == 6, block
+        assert block[4].startswith("- **What's the database query doing?**")
+        assert block[5].startswith("- **What would surprise the next person?**")
+
+    def test_engineer_what_you_dont_do_renders_one_bullet_per_line(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """The guarded deploy bullet does not swallow the bullet after it."""
+        block = _block_after(rendered["engineer"], "## What You Don't Do")
+        assert block == [
+            "- Architectural critique. That's the architect.",
+            "- Deploy/release concerns. That's the deploy agent.",
+            "- Generic style commentary unrelated to bugs.",
+        ]
+
+    def test_sre_production_environment_renders_one_bullet_per_line(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """Surface, rollback and persistence bullets are three separate lines."""
+        block = _block_after(rendered["sre"], "**Production environment:**")
+        assert block == [
+            "- Server application",
+            "- Rollback available via deployment pipeline",
+            "- Data persistence via postgresql with no server-side recovery",
+        ]
+
+    def test_sre_question_set_renders_one_bullet_per_line(self, rendered: dict[str, str]) -> None:
+        """The surface branch, the blast-radius line and both guarded bullets separate."""
+        block = _block_after(rendered["sre"], "## Your Standing Question Set")
+        assert len(block) == 6, block
+        assert block[1].startswith("- **Is the rollback plan tested?**")
+        assert block[2] == "- **What's the blast radius?** Service unavailable or data corruption?"
+        assert block[3].startswith("- **Are data changes reversible?**")
+        assert block[4].startswith("- **What's the user data recovery path?**")
+        assert block[5].startswith("- **Is there monitoring/alerting for this failure mode?**")
+
+    def test_architect_question_set_renders_one_bullet_per_line(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """Both guarded questions render on their own lines."""
+        block = _block_after(rendered["architect"], "## Your Standing Question Set")
+        assert len(block) == 6, block
+        assert block[2].startswith("- **Where is the system fighting its framework's grain?**")
+        assert block[3].startswith("- **Is the data model the right shape for the access")
+
+    def test_architect_what_you_dont_do_renders_one_bullet_per_line(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """The guarded SRE bullet does not swallow the bullet after it."""
+        block = _block_after(rendered["architect"], "## What You Don't Do")
+        assert block == [
+            "- Implementation critique. That's the engineer.",
+            "- Deploy/release safety. That's the SRE.",
+            "- Micro-optimizations. Focus on structural decisions.",
+        ]
+
+    # --- a catch-all that does not depend on knowing every section -------------
+
+    def test_no_rendered_line_carries_two_markdown_bullets(self, rendered: dict[str, str]) -> None:
+        """No line contains a second `- ` bullet marker glued onto the first.
+
+        The symptom's signature. This catches a collapse in a section none of the
+        tests above names, including one a future template edit introduces.
+        """
+        for role, content in rendered.items():
+            for number, line in enumerate(content.splitlines(), start=1):
+                if not line.startswith("- "):
+                    continue
+                assert not re.search(r"\S- \*\*", line), f"{role}.md:{number}: {line}"
+
+    def test_no_rendered_line_carries_two_numbered_invariants(
+        self, rendered: dict[str, str]
+    ) -> None:
+        """No line contains a second `N. ` item glued onto the first."""
+        for role, content in rendered.items():
+            for number, line in enumerate(content.splitlines(), start=1):
+                if not re.match(r"\d+\. ", line):
+                    continue
+                assert not re.search(r"`\d+\. ", line), f"{role}.md:{number}: {line}"
 
 
 class TestRenderAgents:
