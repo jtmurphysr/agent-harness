@@ -122,11 +122,33 @@ jobs:
       # compound-learning just pushed. Re-point it at current main so the agent reads
       # the AGENTS.md that exists now rather than the one from the merge event (#13).
       #
-      # `git checkout origin/main --detach` DISCARDS the working tree. It is safe only
+      # `-B main` moves the LOCAL BRANCH, and that distinction is the whole fix (#32).
+      # The previous `--detach` form moved HEAD only. claude-code-action ignores HEAD:
+      # it logs the right SHA ("Source branch SHA: <origin/main>") and then runs
+      # `git checkout main` on the LOCAL ref, which actions/checkout pinned at the
+      # merge-event SHA. The run log said so outright -- "Your branch and 'origin/main'
+      # have diverged, and have 1 and 1 different commits each". So every agent branch
+      # cut since #13 landed came off stale main and this step bought nothing. PR #31
+      # was the visible cost: its base was 3 weeks old, it went CONFLICTING, and GitHub
+      # creates no CI run for a conflicting PR -- silent for 20 minutes.
+      #
+      # `-f` keeps the previous behaviour of DISCARDING the working tree. Safe only
       # here: after the wait, before the agent writes any file and before the branch is
       # cut. Moving it later would silently destroy the agent's work.
       - name: Refresh main
-        run: git fetch origin main && git checkout origin/main --detach
+        run: git fetch origin main && git checkout -f -B main origin/main
+      # The assertion the comment above used to make in prose only. A gate that states
+      # a guarantee without checking it is the thing this repo keeps relearning.
+      - name: Assert main is current
+        run: |
+          set -uo pipefail
+          local_sha=$(git rev-parse main 2>/dev/null)
+          remote_sha=$(git rev-parse origin/main 2>/dev/null)
+          if [ -z "$local_sha" ] || [ -z "$remote_sha" ] || [ "$local_sha" != "$remote_sha" ]; then
+            echo "::error::local main (${local_sha:-unresolved}) != origin/main (${remote_sha:-unresolved}) — the agent would branch from stale code. Refusing to dispatch."
+            exit 1
+          fi
+          echo "main is current at ${local_sha:0:7} — safe to branch."
       - name: Check sequential dependency
         id: dep-check
         env:
@@ -627,11 +649,33 @@ jobs:
       # compound-learning just pushed. Re-point it at current main so the agent reads
       # the AGENTS.md that exists now rather than the one from the merge event (#13).
       #
-      # `git checkout origin/main --detach` DISCARDS the working tree. It is safe only
+      # `-B main` moves the LOCAL BRANCH, and that distinction is the whole fix (#32).
+      # The previous `--detach` form moved HEAD only. claude-code-action ignores HEAD:
+      # it logs the right SHA ("Source branch SHA: <origin/main>") and then runs
+      # `git checkout main` on the LOCAL ref, which actions/checkout pinned at the
+      # merge-event SHA. The run log said so outright -- "Your branch and 'origin/main'
+      # have diverged, and have 1 and 1 different commits each". So every agent branch
+      # cut since #13 landed came off stale main and this step bought nothing. PR #31
+      # was the visible cost: its base was 3 weeks old, it went CONFLICTING, and GitHub
+      # creates no CI run for a conflicting PR -- silent for 20 minutes.
+      #
+      # `-f` keeps the previous behaviour of DISCARDING the working tree. Safe only
       # here: after the wait, before the agent writes any file and before the branch is
       # cut. Moving it later would silently destroy the agent's work.
       - name: Refresh main
-        run: git fetch origin main && git checkout origin/main --detach
+        run: git fetch origin main && git checkout -f -B main origin/main
+      # The assertion the comment above used to make in prose only. A gate that states
+      # a guarantee without checking it is the thing this repo keeps relearning.
+      - name: Assert main is current
+        run: |
+          set -uo pipefail
+          local_sha=$(git rev-parse main 2>/dev/null)
+          remote_sha=$(git rev-parse origin/main 2>/dev/null)
+          if [ -z "$local_sha" ] || [ -z "$remote_sha" ] || [ "$local_sha" != "$remote_sha" ]; then
+            echo "::error::local main (${local_sha:-unresolved}) != origin/main (${remote_sha:-unresolved}) — the agent would branch from stale code. Refusing to dispatch."
+            exit 1
+          fi
+          echo "main is current at ${local_sha:0:7} — safe to branch."
       - name: Check sequential dependency (retry)
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
