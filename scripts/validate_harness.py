@@ -224,7 +224,7 @@ def is_stub_only(path: Path) -> bool:
             # Filter out docstrings
             real_stmts = []
             for stmt in body:
-                if isinstance(stmt, ast.Expr) and isinstance(stmt.value, (ast.Constant, ast.Str)):
+                if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
                     continue  # docstring
                 real_stmts.append(stmt)
 
