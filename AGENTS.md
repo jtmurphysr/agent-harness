@@ -252,6 +252,25 @@ issue, and assert the **correct** contract — the eventual fix then fails via
 XPASS, which is the signal to drop the marker. Declare every such resolution in a
 named PR-body section.
 
+<!-- Added after PR #40: the rule above was applied to the issue's premises and
+     not to the agent's own, which is where the defect actually landed. -->
+**The same rule binds your PR body.** Three machine reviewers read it and it is the
+permanent record of the change, so a claim you write there is an assertion, not
+narration. Two kinds go wrong and both are checkable before you push:
+
+- **Behaviour of code you did not open.** PR #40 bumped three template versions and
+  devoted a section to how `cli/sync.py` would propagate them to the fleet. It does
+  not: `cli/render.py` writes the lock under `.factory/agents/` and `cli/sync.py`
+  reads `.factory/`, so the upgrade path is dead, and the one branch that is live
+  rewrites the lockfile without shipping a template — marking projects as upgraded
+  while their render stays broken. All three reviewers caught it. Read the path, or
+  describe only what your diff does.
+- **Counts, and "these tests fail without the fix."** That second claim is your
+  LESSON 10 evidence, so state it only for the cases you actually re-ran: PR #40
+  said thirteen cases, shipped ten functions / eighteen cases, and at least two of
+  them passed against the unfixed templates. `pytest --collect-only -q` gives you
+  the number; a claim you did not count is one a reviewer will.
+
 ### ⚠️ LESSON 7: An aggregate coverage number proves nothing about any one file
 
 `--cov-fail-under` gates the total. A module can sit at 0% under a green total.
