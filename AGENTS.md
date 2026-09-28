@@ -1,5 +1,5 @@
 # AGENTS.md — Agent Operating Constitution
-# <PROJECT-NAME>
+# agent-harness
 
 This file is the primary context document for all agents operating in this repository.
 Read it in full before taking **any** action. It is the single source of truth for
@@ -9,8 +9,13 @@ conventions, module boundaries, and the definition of "done."
 
 ## Repository Identity
 
-- **Purpose**: <one-line description of what this project does>
-- **Stack**: <language, runtime, framework — e.g., "Python 3.11+, CLI-first, no web framework">
+- **Purpose**: An autonomous development harness that turns a PRD into a working codebase —
+  issues generated from the PRD, dispatched one at a time to agents, gated by CI, auto-merged,
+  and mined for learnings on every merge.
+- **Stack**: Python 3.11+, FastAPI, SQLite, Jinja2. Declared in `.factory/project_context.md`.
+- **This repo is its own first user.** The reviewers that review this repository are rendered
+  from `templates/` + `.factory/project_context.md` exactly the way a generated project's are.
+  If the pipeline is wrong, it is wrong here first.
 - **Paradigm**: Agent-first — all code, tests, and docs are agent-generated
 - **Pipeline**: Issue → Agent → Code → PR → CI → Auto-merge (sequential by dependency)
 - **Human role**: Intent specification, credential provisioning, outcome validation
@@ -19,30 +24,8 @@ conventions, module boundaries, and the definition of "done."
 
 ## Module Boundaries
 
-Define the boundary map for your project. Each module may only import from explicitly
-listed dependencies. This is enforced by `scripts/validate_harness.py`.
-
-<!--
-EXAMPLE (CLI tool with auth, clients, resolvers, pipeline pattern):
-
-```
-app.py                  ← CLI entrypoint only. Parses args, calls pipeline. No logic.
-├── auth/
-│   ├── service_a_auth.py  ← Service A credential lifecycle only
-│   └── service_b_auth.py  ← Service B credential lifecycle only
-├── clients/
-│   ├── service_a_client.py  ← Service A API I/O only. No business logic.
-│   └── service_b_client.py  ← Service B API I/O only. Rate limiting lives here.
-├── resolvers/
-│   ├── primary_resolver.py  ← Primary matching logic only. No API calls.
-│   └── fallback_resolver.py ← Fallback matching logic only. No API calls.
-├── pipeline.py             ← Orchestration only. Imports clients + resolvers + models.
-├── reporter.py             ← Output only. Reads from models. No logic.
-└── models.py               ← Pydantic v2 schemas only. No logic, no internal imports.
-```
--->
-
-This repo's live map. It mirrors `ALLOWED_IMPORTS` in `scripts/validate_harness.py`
+Each module may only import from explicitly listed dependencies. This is enforced
+by `scripts/validate_harness.py`. This repo's live map. It mirrors `ALLOWED_IMPORTS` in `scripts/validate_harness.py`
 exactly; the two are checked against each other and must be edited together.
 
 ```
@@ -56,7 +39,8 @@ renderer/         ← Template composition, lockfile, validators.  Imports nothi
 interview/        ← Analysis.                                    Imports nothing internal.
 notifications/    ← Publishing.                                  Imports nothing internal.
 verdict_store/    ← Verdict persistence: client, models.         Imports nothing internal.
-templates/        ← 6 .md files, zero .py — not importable. Covered by
+templates/        ← 7 .md files (3 role templates + 4 _shared partials), zero .py —
+                    not importable. Covered by
                     tests/test_templates.py and tests/test_shared_partials.py.
 tests/
 ```
@@ -75,25 +59,28 @@ fails the linter; do not add to that set without a written reason.
 
 ### Invariants (enforced by structural linter — `scripts/validate_harness.py`)
 
-<!--
-Define which modules may import from which. Update ALLOWED_IMPORTS in
-scripts/validate_harness.py to match this table.
-
-EXAMPLE:
-
-| Module | May import from | Must NEVER import from |
-|---|---|---|
-| `auth/` | `models` | `clients`, `resolvers`, `pipeline`, `reporter` |
-| `clients/` | `auth`, `models` | `resolvers`, `pipeline`, `reporter` |
-| `resolvers/` | `models` | `auth`, `clients`, `pipeline`, `reporter` |
-| `pipeline` | `clients`, `resolvers`, `models`, `reporter` | `auth` (injected) |
-| `reporter` | `models` | `auth`, `clients`, `resolvers`, `pipeline` |
-| `models` | _(nothing internal)_ | everything |
--->
+This table is the row-by-row form of the map above and of `ALLOWED_IMPORTS` in
+`scripts/validate_harness.py`. All three are one rule written three times; edit
+them together. "Must NEVER import from" is not a second list the linter holds —
+it is every internal module absent from the middle column, spelled out so the
+prohibition is readable without mentally subtracting one set from another. A
+module importing itself is always allowed and is not listed.
 
 | Module | May import from | Must NEVER import from |
 |---|---|---|
-| `<module>` | `<allowed>` | `<forbidden>` |
+| `cli/` | `github`, `interview`, `renderer`, `stonehaven` | `notifications`, `reviewers`, `verdict_store` |
+| `stonehaven/` | `github`, `notifications`, `reviewers`, `verdict_store` | `cli`, `interview`, `renderer` |
+| `github/` | `reviewers` | `cli`, `interview`, `notifications`, `renderer`, `stonehaven`, `verdict_store` |
+| `reviewers/` | `github` | `cli`, `interview`, `notifications`, `renderer`, `stonehaven`, `verdict_store` |
+| `renderer/` | _(nothing internal)_ | everything |
+| `interview/` | _(nothing internal)_ | everything |
+| `notifications/` | _(nothing internal)_ | everything |
+| `verdict_store/` | _(nothing internal)_ | everything |
+
+`scripts/` is not in the table because it is not a boundary-tracked layer: it has
+no `__init__.py`, `collect_python_files` never walks it, and its files reach into
+the packages by appending the repo root to `sys.path`. Adding a row would declare
+a rule nothing checks.
 
 **Why enforce boundaries**: Keeps modules independently testable and prevents coupling.
 
@@ -104,37 +91,54 @@ EXAMPLE:
 > These are the spots where agent-generated code most commonly goes wrong on this project.
 > Read each one. They encode hard-won knowledge about the specific APIs and patterns used.
 
-<!--
-Write warnings as explicit DO/DON'T pairs with code examples.
-Each warning should describe a specific failure mode the agent is likely to hit.
+Each is a failure this repository has actually shipped. The full case for each,
+with the fix that holds it closed, is in `.factory/project_context.md` >
+`sharp_edges` — the same file the reviewers are rendered from. That file is the
+source; this list is the summary an agent reads before writing code.
 
-EXAMPLE:
+### ⚠️ WARNING 1: A gate written as a job-level `if:` is not a gate
 
-### ⚠️ WARNING 1: <API name> uses <auth scheme>, NOT <common wrong scheme>
+`human-review` and `harness-gap` were checked in an `if:` only the `labeled`
+event could satisfy. The auto-advance path (`workflow_dispatch` from
+`close-issue-on-merge.yml`) and `/agent retry` carry no labels in their payload,
+so both went around it and a held issue got an agent. **DO**: put the check in
+one job that every dispatch job `needs`, reading its input itself
+(`scripts/refuse-held-issue.sh`, `scripts/resolve-predecessor.sh`). **DON'T**:
+move a label or predecessor check back into an `if:` expression.
 
-JWT for <Service> **must** use the ES256 algorithm (ECDSA with P-256).
-Most JWT tutorials use RS256 (RSA). Using RS256 will produce tokens
-that are silently rejected with a 401.
+### ⚠️ WARNING 2: Every gate fails CLOSED, including on a lookup miss
 
-### ⚠️ WARNING 2: <field> is not always present in <API> responses
+`(invariant: gate_fails_closed)`. An unresolvable predecessor, an unreadable
+label list, an unparseable verdict, a cancelled reviewer job — each means "did
+not verify," and each must block. **DON'T** write `!= 'failure'`: it swallows
+`cancelled` and `skipped`, which is how a timed-out review merges itself.
+**DO** require `== 'success'` explicitly.
 
-`response["data"].get("field")` — always use `.get()`, never direct access.
-When field is absent, degrade gracefully to fallback strategy. Never raise, never skip.
+### ⚠️ WARNING 3: Never hand-edit `.claude/agents/*.md`
 
-### ⚠️ WARNING 3: <Service> rate limits — 429s are guaranteed at scale
+They are rendered from `templates/*.template.md` + `.factory/project_context.md`
+by `cli.render.render_agents`. They had drifted 106 lines when they were
+hand-maintained. Claude Code's protected-path guard also refuses agent writes
+under `.claude/`, before any allow rule. **DO**: edit the template or the
+context, then run `python scripts/render_own_agents.py`. `validate_harness.py`
+Pass 3 fails on drift `(invariant: rendered_agents_match_templates)`.
 
-All retry/backoff logic lives in `clients/<service>_client.py`. Nowhere else.
-Callers must never implement their own retry logic.
+### ⚠️ WARNING 4: Two tokens, and only one of them may touch `.github/workflows/`
 
-### ⚠️ WARNING 4: Idempotency — check before create, not after failure
+GitHub rejects any push touching a workflow file from a token without `workflow`
+scope. `GH_PAT` carries `repo` and nothing else and is used in ten read/label
+places; `GH_WORKFLOW_PAT` is the only one that can push a workflow change. The
+`workflow-guard` job labels any PR touching one `human-review`, and auto-merge
+reads that job's output directly. **An agent may propose a change to the rules;
+it may not land one alone.**
 
-Before creating a resource, check if one with the same identifier already exists.
-Do not rely on catching a "duplicate" error — not all APIs return one reliably.
--->
+### ⚠️ WARNING 5: A green workflow run is not evidence the agent did anything
 
-### ⚠️ WARNING N: <title>
-
-<description of failure mode and correct pattern>
+`gc-agent.yml` ran for three weeks reporting success with
+`permission_denials_count` at 18 and zero output: `claude-code-action` v1 does
+not read `.claude/settings.json`, so without `claude_args --allowedTools` the
+agent has only the read-only default tool set. **DO**: before believing a green
+run that produced nothing, read `permission_denials_count` in the result JSON.
 
 ---
 
@@ -512,19 +516,19 @@ def _require_env(key: str) -> str:
     if not value:
         raise EnvironmentError(
             f"Required environment variable '{key}' is not set. "
-            f"See docs/setup.md for configuration instructions."
+            f"See README.md for configuration instructions."
         )
     return value
 ```
 
-Required vars:
-<!--
-List all required environment variables for your project.
-Example:
-- `SERVICE_A_API_KEY`
-- `SERVICE_B_CLIENT_ID`
-- `SERVICE_B_CLIENT_SECRET`
--->
+Required vars: **none, in application code.** No module under `cli/`, `github/`,
+`interview/`, `notifications/`, `renderer/`, `reviewers/`, `stonehaven/`,
+`verdict_store/` or `scripts/` reads `os.environ` or `os.getenv` — every
+credential is passed in as an argument. The secrets this repository uses
+(`ANTHROPIC_API_KEY`, `GH_PAT`, `GH_WORKFLOW_PAT`) are consumed by
+`.github/workflows/`, not by Python. If you add the first `os.environ` read to
+application code, use the `_require_env` pattern above and add the name here in
+the same change.
 
 ### Testing
 - `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`)
@@ -547,14 +551,28 @@ Example:
 
 ## Repository Knowledge Map
 
+Every path in this table exists. Four entries here named `docs/architecture.md`,
+`docs/setup.md`, `docs/conventions.md` and `docs/decisions/` until 2026-09-28; none
+of the four had ever been written in this repo, so a map whose job is to tell an
+agent where to look sent it to four dead paths and omitted `docs/learnings/`, the
+one directory it most needs. If you add a row, add the file in the same change.
+
 | Document | Purpose |
 |---|---|
-| `AGENTS.md` | This file. Operating constitution. |
-| `docs/architecture.md` | Module map, data flow, API contracts |
-| `docs/setup.md` | Credential provisioning and environment setup |
-| `docs/conventions.md` | Patterns and anti-patterns |
-| `docs/decisions/` | Architectural decision records |
-| `scripts/validate_harness.py` | Boundary linter |
+| `AGENTS.md` | This file. Operating constitution — boundaries, lessons, definition of done. |
+| `README.md` | What the harness is, its pipeline, and the step-by-step bootstrap for a new repo. |
+| `.factory/project_context.md` | This repo's own project context: stack, invariant ids, sharp edges. Input to the renderer and to the verdict parser's citation check. |
+| `docs/learnings/` | Compound learnings from merged PRs — one file per PR. Read before repeating a pattern. |
+| `docs/examples/` | Reference material from a validated project (`playlist-migrate`): its issue specs and learnings. Another repo's code; not this one's. |
+| `docs/issues/` | Issue specs written by `prd-to-issues`. Empty in this repo — its issues live on GitHub. |
+| `docs/harness-hardening-plan.md` | Standing plan for the harness's own evolution. Aspirational, not current law. |
+| `templates/` | Reviewer role templates and `_shared/` partials. The verdict and output contracts live here. |
+| `scripts/validate_harness.py` | Structural linter: boundaries, cycles, coverage-omit drift, rendered-agent drift. |
+| `scripts/check_coverage_floor.py` | Per-file 85% coverage gate (raw float, two decimals). |
+| `.github/workflows/ci.yml` | Every gate, in the order it runs. The auto-merge `if:` is the authoritative list of what must pass. |
+
+Nothing in this repo is an ADR store. `docs/learnings/` carries decisions in
+retrospect; the standing decisions are in this file.
 
 ---
 
