@@ -5,20 +5,29 @@ Per-file coverage floor gate.
 AGENTS.md > Conventions declares an 85% coverage floor. `--cov-fail-under=85` in
 `.github/workflows/ci.yml` gates the TOTAL only, and `coverage report` rounds any
 real value in [84.5%, 85.5%) to "85%" at its default integer precision -- so a
-sub-floor file passes CI *and* reads as compliant in every log it appears in. That
-is how `conformance/monday_arc_test.py` sat at 84.69% from PR #35 through the whole
-#48-#52 coverage chain without one report saying so (issue #73).
+sub-floor file passes CI *and* reads as compliant in every log it appears in.
+That failure was observed in `jtmurphysr/elp-mosaic`, where one conformance test
+file sat at 84.69% across a whole coverage chain without one report saying so;
+this repo's tracking issue is #14, and the case history stays in that repo.
 
-This script is the missing mechanism for that declared guarantee (AGENTS.md >
-Governing Principles, 2). It compares the RAW FLOAT from `coverage.json` against
-the floor and prints every figure to two decimal places -- it never rounds to an
-integer anywhere, because, per docs/learnings/pr-76.md, "a threshold compared
-against a rounded reading is not a threshold at the boundary, which is the only
-place it matters."
+This script is the missing mechanism for that declared guarantee. It compares the
+RAW FLOAT from `coverage.json` against the floor and prints every figure to two
+decimal places -- it never rounds to an integer anywhere, because a threshold
+compared against a rounded reading is not a threshold at the boundary, which is
+the only place it matters.
 
-Deliberately stdlib-only: `scripts/` is excluded from ruff and from coverage
-(`pyproject.toml`), so this file is checked by nothing automatically and must stay
-cheap to read. It is NOT excluded from mypy, so it is fully annotated.
+Deliberately stdlib-only, so it stays cheap to read. What does and does not check
+this file, as of #12/#15 (ruff) and #36 (coverage) -- all three were stated
+backwards here until the 2026-09-28 GC pass:
+
+  * ruff      CHECKS it. `[tool.ruff] extend-exclude = []` -- there is no
+              excluded tree in this repo, `scripts/` included.
+  * coverage  MEASURES it. `[tool.coverage.run] omit` lists only `tests/*`,
+              `docs/*` and `.venv/*`; this file reports at 100%.
+  * mypy      SKIPS it. `[tool.mypy] exclude = ["scripts/"]`, because `scripts/`
+              has no `__init__.py` and mypy sees each file twice. It is fully
+              annotated anyway -- but nothing verifies that, so do not rely on a
+              type error here failing CI.
 
 Usage:
     pytest tests/ --cov=.                       # produce .coverage
