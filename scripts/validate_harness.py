@@ -2,9 +2,18 @@
 """
 Harness structural linter.
 
-Enforces:
-  1. Module boundary rules defined in AGENTS.md
-  2. Coverage omit hygiene — implemented modules must not be omitted
+Enforces, in this order:
+  1.  Module boundary rules defined in AGENTS.md — ALLOWED_IMPORTS below is the
+      machine-readable copy of that table, and tests/test_validate_harness.py
+      fails when the two disagree.
+  1b. Import cycles in the DECLARED graph — anything not in KNOWN_CYCLES fails,
+      and a KNOWN_CYCLES entry whose cycle has gone is reported as stale.
+  2.  Coverage omit hygiene — implemented modules must not be omitted.
+  3.  Rendered agent definitions in sync — .claude/agents/*.md must equal a
+      fresh render of templates/ + .factory/project_context.md.
+
+Passes 1b and 3 were added after the docstring above them was written and went
+four months undocumented here; a reader counting passes from this header got 2.
 
 Exits 0 if clean. Exits 1 with actionable output on violations.
 
@@ -35,9 +44,14 @@ except ImportError:
 # pipeline/reporter/models -- until 2026-08-24. None of them exist in this repo,
 # so INTERNAL_MODULES resolved to nothing on disk, Pass 1 walked zero files, and
 # "Harness Structure" passed green as a required check while verifying nothing.
-# AGENTS.md still carries the same unfilled placeholder; the templating step was
-# never completed. Below is this repo's real graph, derived by AST-walking every
-# package in pyproject's packages list.
+# Below is this repo's real graph, derived by AST-walking every package in
+# pyproject's packages list.
+#
+# AGENTS.md > Module Boundaries carries the same graph twice -- once as a fenced
+# block, once as the invariants table -- and claims the copies are "checked
+# against each other". They were not: nothing read AGENTS.md. They are now, by
+# TestAgentsMdBoundaryDoc in tests/test_validate_harness.py, so editing this
+# dict without editing both of those fails CI, which is what the claim promised.
 # ─────────────────────────────────────────────────────────────────
 ALLOWED_IMPORTS: dict[str, set[str]] = {
     # Leaves — import nothing internal.
@@ -51,8 +65,9 @@ ALLOWED_IMPORTS: dict[str, set[str]] = {
     # Orchestrators.
     "stonehaven": {"github", "notifications", "reviewers", "verdict_store"},
     "cli": {"github", "interview", "renderer", "stonehaven"},
-    # `templates` is in pyproject's packages list but holds 6 .md files and zero
-    # .py, so nothing can import it and it is not an internal module here.
+    # `templates` is in pyproject's packages list but holds 7 .md files (3 role
+    # templates + 4 _shared partials) and zero .py, so nothing can import it and
+    # it is not an internal module here.
 }
 
 # Cycles present when this map was first written, accepted explicitly so that

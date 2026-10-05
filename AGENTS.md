@@ -44,6 +44,11 @@ app.py                  ← CLI entrypoint only. Parses args, calls pipeline. No
 
 This repo's live map. It mirrors `ALLOWED_IMPORTS` in `scripts/validate_harness.py`
 exactly; the two are checked against each other and must be edited together.
+`TestAgentsMdBoundaryDoc` in `tests/test_validate_harness.py` parses **both** the
+fenced block below and the invariants table under it and fails when either drifts
+from `ALLOWED_IMPORTS`. Until 2026-10-05 that sentence described an intention and
+nothing read this file — which is how the table below spent the same period as the
+`<module>` placeholder, directly under a map it was supposed to restate.
 
 ```
 cli/              ← Entrypoints: init, reconcile, render, review, sync.
@@ -56,8 +61,9 @@ renderer/         ← Template composition, lockfile, validators.  Imports nothi
 interview/        ← Analysis.                                    Imports nothing internal.
 notifications/    ← Publishing.                                  Imports nothing internal.
 verdict_store/    ← Verdict persistence: client, models.         Imports nothing internal.
-templates/        ← 6 .md files, zero .py — not importable. Covered by
-                    tests/test_templates.py and tests/test_shared_partials.py.
+templates/        ← 7 .md files (3 role templates + 4 _shared partials), zero .py
+                    — not importable. Covered by tests/test_templates.py and
+                    tests/test_shared_partials.py.
 tests/
 ```
 
@@ -93,7 +99,18 @@ EXAMPLE:
 
 | Module | May import from | Must NEVER import from |
 |---|---|---|
-| `<module>` | `<allowed>` | `<forbidden>` |
+| `cli/` | `github`, `interview`, `renderer`, `stonehaven` | `notifications`, `reviewers`, `verdict_store` |
+| `stonehaven/` | `github`, `notifications`, `reviewers`, `verdict_store` | `cli`, `interview`, `renderer` |
+| `github/` | `reviewers` | `cli`, `interview`, `notifications`, `renderer`, `stonehaven`, `verdict_store` |
+| `reviewers/` | `github` | `cli`, `interview`, `notifications`, `renderer`, `stonehaven`, `verdict_store` |
+| `renderer/` | _(nothing internal)_ | everything |
+| `interview/` | _(nothing internal)_ | everything |
+| `notifications/` | _(nothing internal)_ | everything |
+| `verdict_store/` | _(nothing internal)_ | everything |
+
+`cli/` reaches `verdict_store` and `notifications` only *through* `stonehaven`;
+that is the reason for the two entries in its forbidden column rather than an
+oversight. `github` ↔ `reviewers` is the accepted cycle described above.
 
 **Why enforce boundaries**: Keeps modules independently testable and prevents coupling.
 
@@ -550,11 +567,20 @@ Example:
 | Document | Purpose |
 |---|---|
 | `AGENTS.md` | This file. Operating constitution. |
-| `docs/architecture.md` | Module map, data flow, API contracts |
-| `docs/setup.md` | Credential provisioning and environment setup |
-| `docs/conventions.md` | Patterns and anti-patterns |
-| `docs/decisions/` | Architectural decision records |
+| `docs/architecture.md` | The three repo layers, the real module graph, and the two data flows |
+| `docs/harness-hardening-plan.md` | Phased remediation plan; aspirational, not a description of today |
+| `docs/learnings/` | Compound learnings, one file per merged PR. History, not law. |
+| `docs/examples/` | Reference issue specs and learnings from validated projects |
+| `README.md` > Getting Started | Credential provisioning and environment setup |
+| `AGENTS.md` > Code Conventions | Patterns and anti-patterns |
 | `scripts/validate_harness.py` | Boundary linter |
+| `scripts/check_coverage_floor.py` | Per-file coverage floor gate |
+
+Until 2026-10-05 four of these rows named files that have never existed in this
+repo — `docs/setup.md`, `docs/conventions.md`, `docs/decisions/`, and (until this
+pass created it) `docs/architecture.md`. A knowledge map is read by agents that
+cannot see the filesystem listing; a row pointing at nothing costs a `Read` and
+teaches the wrong shape. If you add a row, the path must resolve.
 
 ---
 

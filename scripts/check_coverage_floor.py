@@ -16,9 +16,21 @@ integer anywhere, because, per docs/learnings/pr-76.md, "a threshold compared
 against a rounded reading is not a threshold at the boundary, which is the only
 place it matters."
 
-Deliberately stdlib-only: `scripts/` is excluded from ruff and from coverage
-(`pyproject.toml`), so this file is checked by nothing automatically and must stay
-cheap to read. It is NOT excluded from mypy, so it is fully annotated.
+Deliberately stdlib-only, so it stays cheap to read. The rest of what this
+paragraph used to claim is no longer true and was wrong in both directions:
+
+- `scripts/` is NOT excluded from ruff. `[tool.ruff] extend-exclude = []` since
+  #12/#15 -- AGENTS.md LESSON 13 -- so this file is linted and formatted.
+- `scripts/` is NOT in `[tool.coverage.run] omit`, and this file reports at
+  100.00% because `tests/test_check_coverage_floor.py` imports it. Note what
+  that does and does not buy: coverage only walks importable directories for
+  unmeasured files, and `scripts/` has no `__init__.py`, so a script no test
+  imports is absent from `coverage.json` entirely rather than present at 0% --
+  invisible to this gate instead of failing it (issue #42).
+- `scripts/` IS excluded from mypy (`[tool.mypy] exclude`), the reverse of what
+  this said. The annotations below are still complete and still checked, because
+  mypy's `exclude` does not stop import following and `tests/` imports this
+  module -- but that is a side effect of a test, not a configured guarantee.
 
 Usage:
     pytest tests/ --cov=.                       # produce .coverage
