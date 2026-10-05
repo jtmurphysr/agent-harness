@@ -40,3 +40,10 @@ htmlcov/
 
 # Reviewer prompt assembled by ci.yml review-* jobs; never committed.
 .review/
+
+# Written into the workspace by gc-agent.yml's two report steps, which redirect
+# into the repo root rather than /tmp because the agent has to read them back.
+# Unignored, every GC run hands the agent a dirty tree whose two stray files are
+# the run's own scratch output -- and `git add -A` commits them.
+coverage_report.txt
+harness_report.txt

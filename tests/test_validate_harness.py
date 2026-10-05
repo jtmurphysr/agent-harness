@@ -18,6 +18,7 @@ globals -- the paths resolve at call time, so the real resolution logic runs.
 """
 
 import ast
+import re
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -650,6 +651,194 @@ class TestBoundaryMapInvariants:
         }
 
         assert cycles - vh.KNOWN_CYCLES == set()
+
+
+# ─────────────────────────────────────────────────────────────────
+# AGENTS.md > Module Boundaries vs ALLOWED_IMPORTS
+#
+# AGENTS.md says the two "are checked against each other and must be edited
+# together." Nothing read AGENTS.md, so they were not -- which is how its
+# invariants table sat at the `<module>` / `<allowed>` / `<forbidden>` template
+# placeholder directly beneath a filled-in map it was supposed to restate, past
+# a linter rewrite whose entire premise was that a check which cannot fail is a
+# decoration. These are the check.
+#
+# The parsers take text, not a path, so the negative cases below can drive them
+# with a mutated document and prove they fire. A doc parser asserted only
+# against the document it was written for is the decoration again.
+# ─────────────────────────────────────────────────────────────────
+
+AGENTS_MD = Path(__file__).resolve().parent.parent / "AGENTS.md"
+
+_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_BLOCK_ENTRY = re.compile(r"^(\w+)/", re.MULTILINE)
+_MAY_IMPORT = re.compile(r"May import:\s*([^\n.]+)")
+_TABLE_ROW = re.compile(r"^\|\s*`(\w+)/`\s*\|([^|]*)\|([^|]*)\|", re.MULTILINE)
+_BACKTICKED = re.compile(r"`(\w+)`")
+
+
+def _strip_comments(text: str) -> str:
+    """Drop HTML comments, which is where AGENTS.md keeps its EXAMPLE map and table."""
+    return _COMMENT.sub("", text)
+
+
+def parse_boundary_block(agents_md: str) -> dict[str, set[str]]:
+    """Parse the fenced module map under `## Module Boundaries`.
+
+    Returns module -> allowed imports, for every entry that declares a rule.
+    Entries that declare neither (`templates/`, `tests/`) are omitted -- they are
+    not importable modules and carry no rule to compare.
+    """
+    body = _strip_comments(agents_md).split("## Module Boundaries", 1)[-1]
+    fenced = body.split("```")[1]
+
+    starts = [m.start() for m in _BLOCK_ENTRY.finditer(fenced)]
+    rules: dict[str, set[str]] = {}
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(fenced)
+        entry = fenced[start:end]
+        name = str(_BLOCK_ENTRY.match(entry, 0).group(1))  # type: ignore[union-attr]
+
+        may = _MAY_IMPORT.search(entry)
+        if may:
+            rules[name] = {token.strip() for token in may.group(1).split(",") if token.strip()}
+        elif "Imports nothing internal" in entry:
+            rules[name] = set()
+    return rules
+
+
+def parse_invariants_table(agents_md: str) -> dict[str, tuple[set[str], set[str]]]:
+    """Parse the invariants table under `### Invariants`.
+
+    Returns module -> (may import from, must never import from). `everything` in
+    the forbidden column expands to every other module in the table.
+    """
+    body = _strip_comments(agents_md).split("### Invariants", 1)[-1]
+
+    raw: dict[str, tuple[set[str], str]] = {}
+    for module, allowed_cell, forbidden_cell in _TABLE_ROW.findall(body):
+        allowed = (
+            set() if "nothing internal" in allowed_cell else set(_BACKTICKED.findall(allowed_cell))
+        )
+        raw[module] = (allowed, forbidden_cell)
+
+    parsed: dict[str, tuple[set[str], set[str]]] = {}
+    for module, (allowed, forbidden_cell) in raw.items():
+        forbidden = (
+            set(raw) - {module} - allowed
+            if "everything" in forbidden_cell
+            else set(_BACKTICKED.findall(forbidden_cell))
+        )
+        parsed[module] = (allowed, forbidden)
+    return parsed
+
+
+class TestAgentsMdBoundaryDoc:
+    """`AGENTS.md`'s two copies of the boundary graph must match `ALLOWED_IMPORTS`."""
+
+    def test_fenced_map_matches_allowed_imports(self) -> None:
+        """The prose map under `## Module Boundaries` is the normative statement."""
+        assert parse_boundary_block(AGENTS_MD.read_text(encoding="utf-8")) == vh.ALLOWED_IMPORTS
+
+    def test_invariants_table_matches_allowed_imports(self) -> None:
+        """The table's allowed column, and its forbidden column as the complement."""
+        table = parse_invariants_table(AGENTS_MD.read_text(encoding="utf-8"))
+        expected = {
+            module: (allowed, set(vh.ALLOWED_IMPORTS) - {module} - allowed)
+            for module, allowed in vh.ALLOWED_IMPORTS.items()
+        }
+
+        assert table == expected
+
+    def test_table_is_not_the_unfilled_template_placeholder(self) -> None:
+        """`<module>` is not a module. It shipped in that column for months."""
+        body = _strip_comments(AGENTS_MD.read_text(encoding="utf-8"))
+
+        assert "| `<module>` |" not in body
+        assert "<allowed>" not in body
+
+    def test_parser_rejects_a_map_that_drops_a_module(self) -> None:
+        """Delete `github/` from the map and the comparison must notice."""
+        doc = dedent(
+            """
+            ## Module Boundaries
+            ```
+            cli/      ← May import: github, interview, renderer, stonehaven
+            renderer/ ← Imports nothing internal.
+            ```
+            """
+        )
+
+        assert parse_boundary_block(doc) == {
+            "cli": {"github", "interview", "renderer", "stonehaven"},
+            "renderer": set(),
+        }
+        assert parse_boundary_block(doc) != vh.ALLOWED_IMPORTS
+
+    def test_parser_rejects_a_map_that_widens_a_rule(self) -> None:
+        """A target added in prose but not in `ALLOWED_IMPORTS` must not compare equal."""
+        doc = dedent(
+            """
+            ## Module Boundaries
+            ```
+            github/ ← May import: reviewers, verdict_store
+            ```
+            """
+        )
+
+        assert parse_boundary_block(doc)["github"] == {"reviewers", "verdict_store"}
+        assert parse_boundary_block(doc)["github"] != vh.ALLOWED_IMPORTS["github"]
+
+    def test_parser_ignores_the_example_map_in_the_html_comment(self) -> None:
+        """`auth/`, `clients/` and friends live in a comment and are not the live map."""
+        doc = dedent(
+            """
+            ## Module Boundaries
+            <!--
+            ```
+            auth/ ← May import: models
+            ```
+            -->
+            ```
+            renderer/ ← Imports nothing internal.
+            ```
+            """
+        )
+
+        assert parse_boundary_block(doc) == {"renderer": set()}
+
+    def test_table_parser_expands_everything_to_the_complement(self) -> None:
+        """`everything` is shorthand; it has to resolve before it can be compared."""
+        doc = dedent(
+            """
+            ### Invariants
+            | Module | May import from | Must NEVER import from |
+            |---|---|---|
+            | `cli/` | `github` | `renderer` |
+            | `github/` | _(nothing internal)_ | everything |
+            | `renderer/` | _(nothing internal)_ | everything |
+            """
+        )
+
+        assert parse_invariants_table(doc) == {
+            "cli": ({"github"}, {"renderer"}),
+            "github": (set(), {"cli", "renderer"}),
+            "renderer": (set(), {"cli", "github"}),
+        }
+
+    def test_table_parser_rejects_a_row_contradicting_its_own_forbidden_column(self) -> None:
+        """A module listed as both allowed and forbidden is drift, not a rule."""
+        doc = dedent(
+            """
+            ### Invariants
+            | Module | May import from | Must NEVER import from |
+            |---|---|---|
+            | `cli/` | `github` | `github`, `renderer` |
+            """
+        )
+        allowed, forbidden = parse_invariants_table(doc)["cli"]
+
+        assert allowed & forbidden == {"github"}
 
 
 # ─────────────────────────────────────────────────────────────────
