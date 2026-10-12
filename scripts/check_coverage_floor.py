@@ -2,23 +2,27 @@
 """
 Per-file coverage floor gate.
 
-AGENTS.md > Conventions declares an 85% coverage floor. `--cov-fail-under=85` in
-`.github/workflows/ci.yml` gates the TOTAL only, and `coverage report` rounds any
+AGENTS.md > Definition of Done declares an 85% coverage floor. `--cov-fail-under=85`
+in `.github/workflows/ci.yml` gates the TOTAL only, and `coverage report` rounds any
 real value in [84.5%, 85.5%) to "85%" at its default integer precision -- so a
-sub-floor file passes CI *and* reads as compliant in every log it appears in. That
-is how `conformance/monday_arc_test.py` sat at 84.69% from PR #35 through the whole
-#48-#52 coverage chain without one report saying so (issue #73).
+sub-floor file passes CI *and* reads as compliant in every log it appears in. In
+`jtmurphysr/elp-mosaic`, where this was first found, one module sat at 84.69%
+across a seventeen-PR stretch without a single report saying so. This repo's own
+tracking issue is #14.
 
-This script is the missing mechanism for that declared guarantee (AGENTS.md >
-Governing Principles, 2). It compares the RAW FLOAT from `coverage.json` against
-the floor and prints every figure to two decimal places -- it never rounds to an
-integer anywhere, because, per docs/learnings/pr-76.md, "a threshold compared
-against a rounded reading is not a threshold at the boundary, which is the only
-place it matters."
+This script is the missing mechanism for that declared guarantee. It compares the
+RAW FLOAT from `coverage.json` against the floor and prints every figure to two
+decimal places -- it never rounds to an integer anywhere, because a threshold
+compared against a rounded reading is not a threshold at the boundary, which is
+the only place it matters.
 
-Deliberately stdlib-only: `scripts/` is excluded from ruff and from coverage
-(`pyproject.toml`), so this file is checked by nothing automatically and must stay
-cheap to read. It is NOT excluded from mypy, so it is fully annotated.
+Deliberately stdlib-only, so it stays cheap to read. Note what does and does not
+check it, because the answer has changed since this file was written (#36):
+`scripts/` IS linted by ruff (`[tool.ruff] extend-exclude` is empty) and IS
+measured by coverage (`[tool.coverage.run] omit` lists only tests/, docs/ and
+.venv/). It is excluded from mypy -- `[tool.mypy] exclude = ["scripts/"]`, because
+with no `__init__.py` mypy sees every script twice -- so the annotations here are
+not machine-checked. Keep them correct by hand.
 
 Usage:
     pytest tests/ --cov=.                       # produce .coverage
@@ -51,11 +55,10 @@ FLOOR: float = 85.0
 # Active entries are printed on EVERY run, passing runs included, so the list
 # cannot go quiet.
 #
-# Deliberately empty: at the time this gate was wired in, no measured file was
-# below 85.00% when this gate was introduced. Do not add an entry
-# where a test would do, and never resolve a shortfall by editing the
-# `[tool.coverage.run]` omit list -- that is the drift
-# `scripts/validate_harness.py` Pass 2 exists to catch.
+# Deliberately empty: no measured file was below 85.00% when this gate was wired
+# in, and none is today. Do not add an entry where a test would do, and never
+# resolve a shortfall by editing the `[tool.coverage.run]` omit list -- that is
+# the drift `scripts/validate_harness.py` Pass 2 exists to catch.
 EXCEPTIONS: dict[str, tuple[float, str]] = {}
 
 # A reason string must contain an issue reference to be honoured.
@@ -192,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     print("CI FAILED — raise the file's coverage with tests, or add a dated")
     print("EXCEPTIONS entry naming a tracking issue. Do not add it to the")
     print("[tool.coverage.run] omit list.")
-    print("Reference: AGENTS.md > Conventions, issue #73")
+    print("Reference: AGENTS.md > Definition of Done, issue #14")
     return 1
 
 

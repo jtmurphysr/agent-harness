@@ -56,8 +56,13 @@ renderer/         ← Template composition, lockfile, validators.  Imports nothi
 interview/        ← Analysis.                                    Imports nothing internal.
 notifications/    ← Publishing.                                  Imports nothing internal.
 verdict_store/    ← Verdict persistence: client, models.         Imports nothing internal.
-templates/        ← 6 .md files, zero .py — not importable. Covered by
-                    tests/test_templates.py and tests/test_shared_partials.py.
+templates/        ← 7 .md files (3 role templates + 4 _shared/ partials), zero .py
+                    — not importable. Covered by tests/test_templates.py and
+                    tests/test_shared_partials.py.
+scripts/          ← Tools, not a package: no __init__.py, nothing imports it, so it
+                    carries no boundary rule. Excluded from mypy for that reason
+                    (`[tool.mypy] exclude`); linted by ruff and measured by
+                    coverage like every other tree.
 tests/
 ```
 
@@ -311,8 +316,9 @@ It tests the default, not the mechanism. Assert on something the mechanism
 *adds* and nothing defaults — a block, a header, a computed field. To test the
 enforcer in isolation, drive a route that omits the field entirely.
 
-This is Governing Principle 2 applied to tests: coverage proves the code runs,
-not that it enforces.
+Stated generally: coverage proves the code runs, not that it enforces. (This
+sentence cited "Governing Principle 2" until 2026-10-12; this file has never had
+a Governing Principles section, so the citation pointed nowhere.)
 
 <!-- generalised after PR #43 — see docs/learnings/pr-43.md -->
 
@@ -547,14 +553,22 @@ Example:
 
 ## Repository Knowledge Map
 
+Every row below names a path that exists. Until 2026-10-12 four of them did not
+(`docs/setup.md`, `docs/conventions.md`, `docs/decisions/`, and — until this pass
+created it — `docs/architecture.md`). A knowledge map that points at absent files
+sends an agent looking for a contract nobody wrote; if you add a row, create the
+file in the same change.
+
 | Document | Purpose |
 |---|---|
 | `AGENTS.md` | This file. Operating constitution. |
-| `docs/architecture.md` | Module map, data flow, API contracts |
-| `docs/setup.md` | Credential provisioning and environment setup |
-| `docs/conventions.md` | Patterns and anti-patterns |
-| `docs/decisions/` | Architectural decision records |
+| `docs/architecture.md` | Module map, data flow, entrypoints, data contracts |
+| `README.md` | Credential provisioning, environment setup, bootstrap sequence |
+| `AGENTS.md` > Code Conventions | Patterns and anti-patterns |
+| `docs/learnings/` | Per-PR compound learnings — the case histories behind the Lessons above |
+| `docs/harness-hardening-plan.md` | Phased plan for the known structural debt |
 | `scripts/validate_harness.py` | Boundary linter |
+| `scripts/check_coverage_floor.py` | Per-file coverage floor gate |
 
 ---
 
